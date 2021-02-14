@@ -12,6 +12,7 @@
     <import addon="script.module.requests" version="2.9.1"/>
     <import addon="script.module.kodi-six" version="0.0.5"/>
     <import addon="script.module.pyautogui" version="0.9.49"/>
+    <import addon="script.module.ttml2ssa" version="0.1.16" />
   </requires>
   <extension point="xbmc.python.pluginsource"
              library="default.py">

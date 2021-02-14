@@ -31,7 +31,7 @@
         <setting id="fallback_method" type="enum" label="Fallback" values="None|Browser|Script/Batch|Android" default="0" visible="eq(-21,3)" enable="eq(-1,true)" subsetting="true"/>
         <setting id="proxy_mpdalter" type="bool" label="30248" default="true" visible="eq(-22,3)" />
         <setting id="uhd_android" type="bool" label="30023" default="false" visible="eq(-23,3)" enable="System.Platform.Android"/>
-        <setting id="skip_scene" type="enum" label="30081" lvalues="30082|30083|30084|30085|30086" default="1" visible="eq(-24,3)"/>
+        <setting id="skip_scene" type="enum" label="30081" lvalues="30082|30083|30084|30085|30086" default="0" visible="eq(-24,3)"/>
         <!-- Browser/Script -->
         <setting id="remotectrl" type="bool" label="30074" default="false" visible="lt(-25,2)"/>
         <setting id="remote_vol" type="bool" label="30075" default="false" subsetting="true" enable="eq(-1,true)" visible="lt(-26,2)"/>
@@ -45,6 +45,7 @@
         <setting label="30034" type="lsep"/>
         <setting id="sub_stretch" type="bool" label="30028" default="false"/>
         <setting id="sub_stretch_factor" type="enum" values="FILM/NTSC (24/23.976)|NTSC/FILM (23.976/24)|PAL/NTSC (25/23.976)|NTSC/PAL (23.976/25)|PAL/FILM (25/24)|FILM/PAL (24/25)" label="30027" default="0" enable="eq(-1,true)" subsetting="true"/>
+        <setting id="ssa_settings" label="$ADDON[script.module.ttml2ssa 32201]" type="action" option="close" action="Addon.OpenSettings(script.module.ttml2ssa)"/>
         <!-- PrimeVideo -->
         <setting label="30250" type="lsep"/>
         <setting id="pv_language" type="action" label="30025" action="RunPlugin(plugin://plugin.video.amazon-test/pv/languageselect/)" option="close"/>
@@ -114,6 +115,8 @@
     </category>
     <!-- PrimeVideo -->
     <category label="30250">
+        <setting id="pv_freeze_cache" type="bool" label="Don't update cache" default="false"/>
+        <setting type="sep"/>
         <setting id="pv_episode_thumbnails" type="bool" label="30249" default="true"/>
         <setting id="catalog_cache_expiry" type="enum" lvalues="30258|30259|30260|30261|30262|30263|30264|30265" label="30257" default="2"/>
         <setting id="pv_clearcache" type="action" label="30087" action="RunPlugin(plugin://plugin.video.amazon-test/pv/clearcache/)" option="close"/>

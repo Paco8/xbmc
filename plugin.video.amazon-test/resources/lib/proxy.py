@@ -9,6 +9,7 @@ from kodi_six.utils import py2_decode
 import base64
 from resources.lib.logging import Log
 from contextlib import contextmanager
+from ttml2ssa import Ttml2SsaAddon
 try:
     from BaseHTTPServer import BaseHTTPRequestHandler  # Python2 HTTP Server
     from SocketServer import ThreadingTCPServer
@@ -257,6 +258,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
         # Merge the different subtitles lists in a single one, and append a spurious name file
         # to let Kodi figure out the locale, while at the same time enabling subtitles to be
         # proxied and transcoded on-the-fly.
+        subtitle_format = 'ssa' if Ttml2SsaAddon.subtitle_type() == 'ssa' else 'srt'
         for sub_type in list(langCount):  # list() instead of .keys() to avoid py3 iteration errors
             if sub_type in content:
                 for i in range(0, len(content[sub_type])):
@@ -267,19 +269,33 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
                     )
                     # Proxify the URLs, with a make believe Kodi-friendly file name
                     escapedurl = quote_plus(content[sub_type][i]['url'])
-                    content[sub_type][i]['url'] = 'http://127.0.0.1:{}/subtitles/{}/{}{}.srt'.format(
+                    content[sub_type][i]['url'] = 'http://127.0.0.1:{}/subtitles/{}/{}{}.{}'.format(
                         self.server.port,
                         escapedurl,
                         fn,
-                        variants
+                        variants,
+                        subtitle_format
                     )
                     cl = py2_decode(convertLanguage(fn[0:2], ENGLISH_NAME))
                     newsubs.append((content[sub_type][i], cl, fn, variants, escapedurl))
                 del content[sub_type]  # Reduce the data transfer by removing the lists we merged
 
-        # Create the new merged subtitles list, and append time stretched variants.
+        # Create the new merged subtitles list, and append SSA variant.
         for sub in [x for x in sorted(newsubs, key=lambda sub: (sub[1], sub[2], sub[3]))]:
             content['subtitles'].append(sub[0])
+            # Add multiple options for time stretching
+            if Ttml2SsaAddon.subtitle_type() == 'both':
+                from copy import deepcopy
+                cnts = deepcopy(sub[0])
+                urls = 'http://127.0.0.1:{}/subtitles/{}/{}-{{}}{}.ssa'.format(
+                    self.server.port,
+                    sub[4],
+                    sub[2],
+                    sub[3]
+                )
+                # Loop-ready for multiple stretches
+                cnts['url'] = urls.format('[ssa]')
+                content['subtitles'].append(cnts)
 
         self._SendResponse(status_code, headers, json.dumps(content), True)
 
@@ -370,51 +386,18 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
     def _TranscodeSubtitle(self, endpoint, headers, data, filename):
         """ On-the-fly subtitle transcoding (TTMLv2 => SRT) """
 
-        import re
-
         status_code, headers, content = self._ForwardRequest('get', endpoint, headers, data)
+        Log("Subtile filename: {}".format(filename))
+
+        ttml = Ttml2SsaAddon(subtitle_language = filename[0:2])
+        if self.server._s.subtitleStretch:
+            ttml.scale_factor = self.server._s.subtitleStretchFactor
         if 0 < len(content):
-            # Apply a bunch of regex to the content instead of line-by-line to save computation time
-            content = re.sub(r'<(|/)span[^>]*>', r'<\1i>', content)  # Using (|<search>) instead of ()? to avoid py2.7 empty matching error
-            content = re.sub(r'([0-9]{2}:[0-9]{2}:[0-9]{2})\.', r'\1,', content)  # SRT-like timestamps
-            content = re.sub(r'(?:\s*<(?:tt:)?br\s*/>\s*)+', '\n', content)  # Replace <br/> with actual new lines
-
-            # Subtitle timing stretch
-            if self.server._s.subtitleStretch:
-                def _stretch(f):
-                    millis = int(f.group('h')) * 3600000 + int(f.group('m')) * 60000 + int(f.group('s')) * 1000 + int(f.group('ms'))
-                    h, m = divmod(millis * _stretch.factor, 3600000)
-                    m, s = divmod(m, 60000)
-                    s, ms = divmod(s, 1000)
-                    # Truncate to the decimal of a ms (for lazyness)
-                    return '%02d:%02d:%02d,%03d' % (h, m, s, int(ms))
-                _stretch.factor = self.server._s.subtitleStretchFactor
-                content = re.sub(r'(?P<h>\d+):(?P<m>\d+):(?P<s>\d+),(?P<ms>\d+)', _stretch, content)
-
-            # Convert dfxp or ttml2 to srt
-            num = 0
-            srt = ''
-            for tt in re.compile(r'<(?:tt:)?p begin="([^"]+)"[^>]*end="([^"]+)"[^>]*>\s*(.*?)\s*</(?:tt:)?p>', re.DOTALL).findall(content):
-                text = tt[2]
-
-                # Fix Spanish characters
-                if filename.startswith("es"):
-                    text = text.replace('\xA8', u'¿')
-                    text = text.replace('\xAD', u'¡')
-                    text = text.replace(u'ń', u'ñ')
-
-                # Embed RTL and change the punctuation where needed
-                if filename.startswith("ar"):
-                    from unicodedata import lookup
-                    text = re.sub(r'^(?!{}|{})'.format(lookup('RIGHT-TO-LEFT MARK'), lookup('RIGHT-TO-LEFT EMBEDDING')),
-                                  lookup('RIGHT-TO-LEFT EMBEDDING'), text, flags=re.MULTILINE)
-                    text = text.replace('?', '؟').replace(',', '،')
-
-                for ec in [('&amp;', '&'), ('&quot;', '"'), ('&lt;', '<'), ('&gt;', '>'), ('&apos;', "'")]:
-                    text = text.replace(ec[0], ec[1])
-                num += 1
-                srt += '%s\n%s --> %s\n%s\n\n' % (num, tt[0], tt[1], text)
-            content = srt
+            ttml.parse_ttml_from_string(content.encode('utf-8'))
+            if filename.endswith('ssa'):
+                content = ttml.generate_ssa()
+            else:
+                content = ttml.generate_srt()
 
         self._SendResponse(status_code, headers, content)  # Kodi doesn't quite like gzip'd subtitles
 
