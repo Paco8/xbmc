@@ -283,7 +283,6 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
         # Create the new merged subtitles list, and append SSA variant.
         for sub in [x for x in sorted(newsubs, key=lambda sub: (sub[1], sub[2], sub[3]))]:
             content['subtitles'].append(sub[0])
-            # Add multiple options for time stretching
             if Ttml2SsaAddon.subtitle_type() == 'both':
                 from copy import deepcopy
                 cnts = deepcopy(sub[0])
@@ -293,7 +292,6 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
                     sub[2],
                     sub[3]
                 )
-                # Loop-ready for multiple stretches
                 cnts['url'] = urls.format('[ssa]')
                 content['subtitles'].append(cnts)
 
