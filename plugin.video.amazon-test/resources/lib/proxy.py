@@ -258,7 +258,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
         # Merge the different subtitles lists in a single one, and append a spurious name file
         # to let Kodi figure out the locale, while at the same time enabling subtitles to be
         # proxied and transcoded on-the-fly.
-        subtitle_format = 'ssa' if Ttml2SsaAddon.subtitle_type() == 'ssa' else 'srt'
+        subtitle_format = 'srt' if Ttml2SsaAddon.subtitle_type() == 'srt' else 'ssa'
         for sub_type in list(langCount):  # list() instead of .keys() to avoid py3 iteration errors
             if sub_type in content:
                 for i in range(0, len(content[sub_type])):
@@ -286,13 +286,13 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
             if Ttml2SsaAddon.subtitle_type() == 'both':
                 from copy import deepcopy
                 cnts = deepcopy(sub[0])
-                urls = 'http://127.0.0.1:{}/subtitles/{}/{}-{{}}{}.ssa'.format(
+                urls = 'http://127.0.0.1:{}/subtitles/{}/{}-{{}}{}.srt'.format(
                     self.server.port,
                     sub[4],
                     sub[2],
                     sub[3]
                 )
-                cnts['url'] = urls.format('[ssa]')
+                cnts['url'] = urls.format('[srt]')
                 content['subtitles'].append(cnts)
 
         self._SendResponse(status_code, headers, json.dumps(content), True)
