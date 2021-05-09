@@ -31,7 +31,6 @@ class BackgroundService():
             self.proxy.timeout = 1
             self.proxy_thread.start()
             Log('Service: Proxy server started')
-            xbmc.executebuiltin('Notification(Amazon VOD,Service started,3000)')
 
         def _stop_servers():
             self.proxy.server_close()

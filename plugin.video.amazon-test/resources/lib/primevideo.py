@@ -190,9 +190,8 @@ class PrimeVideo(Singleton):
             try:
                 with open(self._catalogCache, 'rb') as fp:
                     cached = pickle.load(fp)
-                if time.time() < cached['expiration'] or self._s.freezeCache:
+                if time.time() < cached['expiration']:
                     self._catalog = cached
-                    self._g.dialog.notification('Amazon VOD', 'Using cache', xbmcgui.NOTIFICATION_INFO, 1000)
             except:
                 Log('Removing corrupted cache file “{}”'.format(self._catalogCache), Log.DEBUG)
                 delete(self._catalogCache)
@@ -973,10 +972,9 @@ class PrimeVideo(Singleton):
             # headerDetail contains sometimes gtis/asins, which are not included in details
             if 'headerDetail' in state['detail']:
                 details.update(state['detail']['headerDetail'])
-            for gti in list(details):
-                if not gti.startswith("amzn1.dv.gti"):
-                    Log("Wrong gti: {} (url: {})".format(gti, url))
-                    del details[gti]
+                del state['detail']['headerDetail']
+            if 'btfMoreDetails' in state['detail']:
+                del state['detail']['btfMoreDetails']
 
             # Get details, seasons first
             # WARNING: seasons may not have proper initialization at this stage
