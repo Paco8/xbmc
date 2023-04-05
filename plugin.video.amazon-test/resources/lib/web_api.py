@@ -1153,10 +1153,9 @@ class PrimeVideo(Singleton):
             # headerDetail contains sometimes gtis/asins, which are not included in details
             if 'headerDetail' in state['detail']:
                 details.update(state['detail']['headerDetail'])
-            for gti in list(details):
-                if not gti.startswith("amzn1.dv.gti"):
-                    Log("Wrong gti: {} (url: {})".format(gti, url))
-                    del details[gti]
+                del state['detail']['headerDetail']
+            if 'btfMoreDetails' in state['detail']:
+                del state['detail']['btfMoreDetails']
 
             # Get details, seasons first
             # WARNING: seasons may not have proper initialization at this stage
