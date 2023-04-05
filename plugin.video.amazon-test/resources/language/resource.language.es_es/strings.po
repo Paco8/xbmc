@@ -34,7 +34,7 @@ msgid "Amazon Account"
 msgstr "Cuenta de Amazon"
 
 msgctxt "#30002"
-msgid "Email Adress"
+msgid "Email Address"
 msgstr "Dirección de e-mail"
 
 msgctxt "#30003"
@@ -383,7 +383,7 @@ msgid "Both"
 msgstr "Ambos"
 
 msgctxt "#30093"
-msgid "Use Web API (beta)"
+msgid "Use Web API (requires restart)"
 msgstr "Usar Web API (beta)"
 
 msgctxt "#30094"
@@ -807,3 +807,19 @@ msgstr ""
 "Estás usando un dispositivo Android que no está registrado con Amazon, por lo que, como máximo, es posible la reproducción en HD.\n"
 "Para poder registrar este dispositivo y así utilizar la reproducción en Ultra HD, necesitas iniciar sesión de nuevo en el add-on con tus credenciales de Amazon.\n"
 "Este mensaje se mostrará una vez."
+
+msgctxt "#30273"
+msgid "Data Source"
+msgstr ""
+
+msgctxt "#30274"
+msgid "Log HTTP response content"
+msgstr ""
+
+msgctxt "#30275"
+msgid "Create Logfiles archive"
+msgstr ""
+
+msgctxt "#30276"
+msgid "Clear Logfiles"
+msgstr ""
