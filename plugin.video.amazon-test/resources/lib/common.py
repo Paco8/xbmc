@@ -46,7 +46,7 @@ class Globals(Singleton):
     PrimeCol = 'FF00A8E0'
     tmdb = 'b34490c056f0dd9e3ec9af2167a731f4'  # b64decode('YjM0NDkwYzA1NmYwZGQ5ZTNlYzlhZjIxNjdhNzMxZjQ=')
     tvdb = '1D62F2F90030C444'  # b64decode('MUQ2MkYyRjkwMDMwQzQ0NA==')
-    langID = {'movie': 30165, 'series': 30166, 'season': 30167, 'episode': 30173, 'tvshow': 30166, 'video': 30173, 'event': 30174}
+    langID = {'movie': 30165, 'series': 30166, 'season': 30167, 'episode': 30173, 'tvshow': 30166, 'video': 30173, 'event': 30174, 'live': 30174}
     KodiVersion = int(xbmc.getInfoLabel('System.BuildVersion').split('.')[0])
     dtid_android = 'A43PXU4ZN2AL1'
     dtid_web = 'AOAGZA014O5RE'
@@ -122,7 +122,7 @@ class Globals(Singleton):
         self._globals['ATVUrl'] = atv
         self._globals['UsePrimeVideo'] = pv
         self._globals['deviceID'] = did
-        ds = 0  # int('0' + self._globals['addon'].getSetting('data_source'))
+        ds = int('0' + self._globals['addon'].getSetting('data_source'))
 
         if ds == 0:
             from .web_api import PrimeVideo
@@ -157,8 +157,8 @@ class Settings(Singleton):
         elif 'playMethod' == name: return int(self._gs('playmethod'))
         elif 'browser' == name: return int(self._gs('browser'))
         elif 'MaxResults' == name: return int(self._gs('items_perpage'))
-        elif 'tvdb_art' == name: return self._gs('tvdb_art')
-        elif 'tmdb_art' == name: return self._gs('tmdb_art')
+        elif 'tvdb_art' == name: return int('0' + self._gs('tvdb_art'))
+        elif 'tmdb_art' == name: return int('0' + self._gs('tmdb_art'))
         elif 'showfanart' == name: return self._gs('useshowfanart') == 'true'
         elif 'dispShowOnly' == name: return self._gs('disptvshow') == 'true'
         elif 'payCont' == name: return self._gs('paycont') == 'true'
@@ -190,8 +190,7 @@ class Settings(Singleton):
         elif 'removePosters' == name: return self._gs('pv_episode_thumbnails') == 'true'
         elif 'useEpiThumbs' == name: return self._gs('tld_episode_thumbnails') == 'true'
         elif 'bypassProxy' == name: return self._gs('proxy_mpdalter') == 'false'
-        elif 'uhdAndroid' == name: return self._gs('uhd_android') == 'true'
-        elif 'freezeCache' == name: return self._gs('pv_freeze_cache') == 'true'
+        elif 'use_h265' == name: return self._gs('use_h265') == 'true'
         elif 'skip_scene' == name: return int('0' + self._gs('skip_scene'))
         elif 'pagination' == name: return {
             'all': self._gs('paginate_everything') == 'true',
@@ -203,10 +202,13 @@ class Settings(Singleton):
             return [3600, 21600, 43200, 86400, 259200, 604800, 1296000, 2592000][int(self._gs('catalog_cache_expiry'))]
         elif 'profiles' == name: return self._gs('profiles') == 'true'
         elif 'show_pass' == name: return self._gs('show_pass') == 'true'
-        elif 'data_source' == name: return 0  # int('0' + self._gs('data_source'))
+        elif 'data_source' == name: return int('0' + self._gs('data_source'))
         elif 'uhd' == name: return self._gs('enable_uhd') == 'true'
         elif 'show_recents' == name: return self._gs('show_recents') == 'true'
         elif 'register_device' == name: return self._gs('register_device') == 'true'
+        elif 'preload_seasons' == name: return self._gs('preload_seasons') == 'true'
+        elif 'preload_all_seasons' == name: return self._gs('preload_all_seasons') == 'true'
+
 
 def jsonRPC(method, props='', param=None):
     """ Wrapper for Kodi's executeJSONRPC API """
@@ -277,6 +279,8 @@ def return_value(dictionary, *keys):
 
 
 def findKey(key, obj):
+    if not isinstance(obj, dict):
+        return {}
     if key in obj.keys():
         return obj[key]
     for v in obj.values():

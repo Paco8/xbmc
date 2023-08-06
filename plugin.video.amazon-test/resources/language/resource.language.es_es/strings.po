@@ -291,15 +291,16 @@ msgid "Miscellaneous"
 msgstr "Varios"
 
 msgctxt "#30071"
-msgid "Display TV-Show instead of Seasons in Watchlist"
-msgstr "Mostrar series en vez de temporadas en la lista de seguimiento"
+msgid "Show season overview immediately after selection"
+msgstr ""
 
 msgctxt "#30072"
 msgid "Verbose Logging"
 msgstr "Registro detallado"
 
+#, fuzzy
 msgctxt "#30073"
-msgid "Display Paid Content"
+msgid "Color Paid/Prime Content"
 msgstr "Mostrar contenido de pago"
 
 msgctxt "#30074"
@@ -393,6 +394,14 @@ msgstr "Consulte la configuración de PrimeVideo para más opciones"
 msgctxt "#30095"
 msgid "Reset addon home page to default"
 msgstr "Restablecer página de inicio del add-on a por defecto"
+
+msgctxt "#30096"
+msgid "Load season/series infos in the background"
+msgstr ""
+
+msgctxt "#30097"
+msgid "Download the info for all seasons"
+msgstr ""
 
 msgctxt "#30100"
 msgid "Library"
@@ -846,3 +855,7 @@ msgstr ""
 msgctxt "#30281"
 msgid "Archive created at {}"
 msgstr ""
+
+#~ msgctxt "#30071"
+#~ msgid "Display TV-Show instead of Seasons in Watchlist"
+#~ msgstr "Mostrar series en vez de temporadas en la lista de seguimiento"

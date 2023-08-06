@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
+import base64
 import json
 from collections import OrderedDict
 from copy import deepcopy
@@ -10,7 +11,7 @@ import re
 
 from .common import key_exists, return_item, return_value, sleep, findKey
 from .singleton import Singleton
-from .network import getURL, getURLData, MechanizeLogin, FQify, GrabJSON
+from .network import getURL, getURLData, MechanizeLogin, FQify, GrabJSON, LocaleSelector
 from .logging import Log, LogJSON
 from .itemlisting import setContentAndView, addVideo, addDir
 from .users import *
@@ -121,33 +122,7 @@ class PrimeVideo(Singleton):
                       'months': {'january': 1, 'february': 2, 'march': 3, 'april': 4, 'may': 5, 'june': 6, 'july': 7, 'august': 8, 'september': 9,
                                  'october': 10, 'november': 11, 'december': 12}}
         }
-        self._languages = [
-            ('id_ID', 'Bahasa Indonesia'),
-            ('da_DK', 'Dansk'),
-            ('de_DE', 'Deutsch'),
-            ('en_US', 'English'),
-            ('en_GB', 'English'),
-            ('es_ES', 'Español'),
-            ('fr_FR', 'Français'),
-            ('it_IT', 'Italiano'),
-            ('nl_NL', 'Nederlands'),
-            ('nb_NO', 'Norsk'),
-            ('pl_PL', 'Polski'),
-            ('pt_BR', 'Português (Brasil)'),
-            ('pt_PT', 'Português (Portugal)'),
-            ('fi_FI', 'Suomi'),
-            ('sv_SE', 'Svenska'),
-            ('tr_TR', 'Türkçe'),
-            ('ru_RU', 'Русский'),
-            ('hi_IN', 'हिन्दी'),
-            ('ta_IN', 'தமிழ்'),
-            ('te_IN', 'తెలుగు'),
-            ('th_TH', 'ไทย'),
-            ('zh_CN', '简体中文'),
-            ('zh_TW', '繁體中文'),
-            ('ko_KR', '한국어'),
-            ('ja_JP', '日本語')
-        ]
+
         self._TextCleanPatterns = [[r'\s+-\s*([^&])', r' – \1'],  # Convert dash from small to medium where needed
                                    [r'\s*-\s+([^&])', r' – \1'],  # Convert dash from small to medium where needed
                                    [r'^\s+', ''],  # Remove leading spaces
@@ -204,9 +179,8 @@ class PrimeVideo(Singleton):
             try:
                 with open(self._catalogCache, 'rb') as fp:
                     cached = pickle.load(fp)
-                if time.time() < cached['expiration'] or self._s.freezeCache:
+                if time.time() < cached['expiration']:
                     self._catalog = cached
-                    self._g.dialog.notification('Amazon VOD', 'Using cache', xbmcgui.NOTIFICATION_INFO, 1000)
             except:
                 Log('Removing corrupted cache file “{}”'.format(self._catalogCache), Log.DEBUG)
                 delete(self._catalogCache)
@@ -377,39 +351,15 @@ class PrimeVideo(Singleton):
 
     def LanguageSelect(self):
         cj = MechanizeLogin()
-        if not cj:
-            return
+        loc, lang = LocaleSelector()
+        Log('Changing text language to [{}] {}'.format(loc, lang), Log.DEBUG)
         if self._g.UsePrimeVideo:
-            l = cj.get('lc-main-av', path='/')
-            langs = self._languages
-            presel = [i for i, x in enumerate(langs) if x[0] == l]
+            cj.set('lc-main-av', loc, path='/')
         else:
-            # TLDs doesn't store locale in cookie by default
-            from mechanicalsoup import StatefulBrowser
-            br = StatefulBrowser(soup_config={'features': 'html.parser'})
-            br.set_cookiejar(cj)
-            br.session.headers.update({'User-Agent': getConfig('UserAgent')})
-            br.open(g.BaseUrl + '/customer-preferences/edit')
-            langs = [(elem.label.input.get('value'), elem.get_text(strip=True), elem.label.input.get('checked') is not None)
-                     for elem in br.get_current_page().find_all('div', attrs={'data-a-input-name': 'lop'})]
-            presel = [i for i, x in enumerate(langs) if x[2] is True]
-
-        if len(langs) < 1:
-            self._g.dialog.notification(g.__plugin__, getString(30270))
-            return
-
-        sel = self._g.dialog.select(getString(30115), [x[1] for x in langs], preselect=presel[0] if presel else -1)
-        if sel < 0:
-            self._g.addon.openSettings()
-        else:
-            Log('Changing text language to [{}] {}'.format(langs[sel][0], langs[sel][1]), Log.DEBUG)
-            if self._g.UsePrimeVideo:
-                cj.set('lc-main-av', langs[sel][0], path='/')
-            else:
-                ck = [k for k, v in cj.items() if 'sess-at-' in k][0].replace('sess-at-', 'lc-')
-                cj.set(ck, langs[sel][0], path='/')
-            saveUserCookies(cj)
-            self.DeleteCache()
+            ck = [k for k, v in cj.items() if 'sess-at-' in k][0].replace('sess-at-', 'lc-')
+            cj.set(ck, loc, path='/')
+        saveUserCookies(cj)
+        self.DeleteCache()
 
     @staticmethod
     def SetHome(path):
@@ -689,11 +639,12 @@ class PrimeVideo(Singleton):
                             gt = entry['metadata']['compactGTI']
                             gtis = self._videodata['urn2gti'].get(gt, gt)
                         in_wl = 1 if path.split('/')[:3] == ['root', 'Watchlist', 'watchlist'] else 0
-                        ctxitems.append((getString(30180 + in_wl) % getString(self._g.langID[m['videometa']['mediatype']]),
-                                         'RunPlugin({}pv/wltoogle/{}/{}/{})'.format(self._g.pluginid, path, quote_plus(gtis), in_wl)))
-                        ctxitems.append((getString(30185) % getString(self._g.langID[m['videometa']['mediatype']]),
-                                         'RunPlugin({}pv/browse/{}/export={})'.format(self._g.pluginid, itemPathURI, ft_exp[folderType] + 10)))
-                        ctxitems.append((getString(30186), 'UpdateLibrary(video)'))
+                        if gtis is not None:
+                            ctxitems.append((getString(30180 + in_wl) % getString(self._g.langID[m['videometa']['mediatype']]),
+                                             'RunPlugin({}pv/wltoogle/{}/{}/{})'.format(self._g.pluginid, path, quote_plus(gtis), in_wl)))
+                            ctxitems.append((getString(30185) % getString(self._g.langID[m['videometa']['mediatype']]),
+                                             'RunPlugin({}pv/browse/{}/export={})'.format(self._g.pluginid, itemPathURI, ft_exp[folderType] + 10)))
+                            ctxitems.append((getString(30186), 'UpdateLibrary(video)'))
 
                 if 'schedule' in m:
                     ts = time.time()
@@ -899,22 +850,27 @@ class PrimeVideo(Singleton):
 
         def AddLiveTV(o, item):
             """ Add a direct playable live TV channel to the list """
-            if 'channelId' in item:
-                chid = item['channelId']
-                if chid in o:
-                    return
+            chid = item.get('playbackAction', item).get('channelId')
+            if 'station' in item and chid is None:
+                chid = item['station'].get('id')
+            if chid is not None and chid not in o:
+                thumb = None
                 o[chid] = {'metadata': {'artmeta': {}, 'videometa': {'mediatype': 'video'}}, 'live': True, 'pos': len(o)}
                 if 'station' in item:
                     title = item['station']['name']
                     o[chid]['metadata']['schedule'] = item['station'].get('schedule', {})
+                    thumb = item['station'].get('logo')
                 elif 'playbackAction' in item:
                     title = item['playbackAction']['label']
+                elif 'facetText' in item:
+                    title = item['facetText']
                 else:
                     title = item['title']
-
+                if 'image' in item:
+                    thumb = item['image'].get('url')
                 o[chid]['title'] = title
                 o[chid]['metadata']['videometa']['plot'] = title + ('\n\n' + item['synopsis'] if 'synopsis' in item else '')
-                o[chid]['metadata']['artmeta']['poster'] = o[chid]['metadata']['artmeta']['thumb'] = MaxSize(item['image']['url'])
+                o[chid]['metadata']['artmeta']['poster'] = o[chid]['metadata']['artmeta']['thumb'] = MaxSize(thumb)
                 o[chid]['metadata']['compactGTI'] = ExtractURN(item['playbackAction']['fallbackUrl']) if 'playbackAction' in item else chid
 
         def AddLiveEvent(o, item, url):
@@ -942,6 +898,8 @@ class PrimeVideo(Singleton):
                 o[urn]['metadata']['artmeta']['thumb'] = MaxSize(item['image']['url'])
             elif key_exists(item, 'packshot', 'image', 'src'):
                 o[urn]['metadata']['artmeta']['thumb'] = MaxSize(item['packshot']['image']['src'])
+            elif 'images' in item:
+                o[urn]['metadata']['artmeta']['thumb'] = MaxSize(findKey('url', item['images']))
 
         def AddSeason(oid, o, bCacheRefresh, url):
             """ Given a season, adds TV Shows to the catalog """
@@ -1328,7 +1286,7 @@ class PrimeVideo(Singleton):
 
             # Too many instances to track, append the episode finder to about every query and cross fingers
             if requestURL is not None:
-                requestURL += ('' if 'episodeListSize' in requestURL else ('&' if '?' in requestURL else '?') + 'episodeListSize=9999')
+                requestURL += ('' if 'episodeListSize' in requestURL or '/api/' in requestURL else ('&' if '?' in requestURL else '?') + 'episodeListSize=9999')
 
             # Load content
             bCouldNotParse = False
@@ -1387,23 +1345,39 @@ class PrimeVideo(Singleton):
                 filtered_col = [x for x in cnt[var + 's'] if x[var + 'Type'].lower() not in ['chartscarousel', 'standardhero', 'textcontainer', 'superhero', 'tentpolehero']]
                 if len(filtered_col) > 1:
                     for collection in filtered_col:
-                        if 'text' in collection:
-                            txt = collection['text']
-                            if ('Channels' in breadcrumb[-1] or findKey("channelId", collection)) \
-                                    and 'facet' in collection and collection['facet'].get('alternateText'):
-                                txt = '{} - {}'.format(collection['facet']['alternateText'], txt)
+                        if 'text' in collection or 'title' in collection:
+                            facet = True
+                            txt = collection.get('text', '').strip()
+                            if txt == '' and 'title' in collection:
+                                txt = collection['title'].strip()
+                            facetxt = collection.get('facet', {}).get('alternateText')
+                            facetxt = collection.get('facetText') if facetxt is None else facetxt
+                            entcues = collection.get('entitlementCues', {})
+                            isprime = collection.get('offerClassification', '') == 'PRIME' or entcues.get('offerType') in ['SVOD', 'TVOD']
+                            isincl = entcues.get('entitledCarousel', 'Entitled') == 'Entitled'
+                            if facetxt is None:
+                                facet = False
+                                facetxt = txt
+                            if isprime:
+                                facetxt = '[COLOR {}]{}[/COLOR]'.format(self._g.PrimeCol, facetxt)
+                            if isincl is False:
+                                facetxt = '[COLOR {}]{}[/COLOR]'.format(self._g.PayCol, facetxt)
+                            txt = '{}{}{}'.format(facetxt, ' ' if isprime or isincl is False else ': ', txt) if facet else txt  # facetxt doesn't mark correctly / to colorful
                             id = txt
                             o[id] = {'title': self._BeautifyText(txt), 'pos': len(o)}
                             if 'seeMoreLink' in collection:
                                 o[id]['lazyLoadURL'] = collection['seeMoreLink']['url']
                             elif 'paginationTargetId' in collection:
                                 q = ['{}={}'.format(k.replace('paginationServiceToken', 'serviceToken'), ','.join(v) if isinstance(v, list) else quote_plus(v))
-                                     for k, v in collection.items() if k in ['collectionType', 'paginationServiceToken', 'paginationTargetId', 'tags']]
-                                q.append('startIndex=0&pageSize=20&pageType=home&pageId=home')
+                                     for k, v in collection.items() if k in ['collectionType', 'paginationServiceToken', 'paginationTargetId', 'tags',
+                                                                             'journeyIngressContext']]
+                                q.append('pageId=live' if 'EpgGroup' in collection.get('containerType', '') else 'pageId=home')
+                                q.append('startIndex=0&pageSize=20&pageType=home')
+                                q.append('isCleanSlateActive=1&isDiscoverActive=1&isLivePageActive=1&variant=desktopWindows&payloadScheme=default&actionScheme=default')
                                 if 'collectionType' not in q:
                                     q.append('collectionType=Container')
                                 if var == 'collection':
-                                    q.append('&facetType=' + collection['facet']['facetType'])
+                                    q.append('facetType=' + collection['facet']['facetType'])
                                 o[id]['lazyLoadURL'] = '/gp/video/api/paginateCollection?' + '&'.join(q)
                             else:
                                 o[id]['lazyLoadData'] = collection
@@ -1453,11 +1427,12 @@ class PrimeVideo(Singleton):
                 for item in items:
                     tile = return_value(item, 'image', 'alternateText')
                     tile_cov = item.get('image', {})
-                    if isinstance(tile, dict) and item.get('widgetType', '').lower() == 'imagetextlink':
-                        tile = item.get('title', item.get('displayTitle'))
-                        tile_cov = item.get('images', {})
-                    else:
-                        tile = None
+                    if isinstance(tile, dict):
+                        if item.get('widgetType', '').lower() == 'imagetextlink':
+                            tile = item.get('title', item.get('displayTitle', item.get('alternateText')))
+                            tile_cov = item.get('images', {})
+                        else:
+                            tile = None
                     if 'heading' in item or 'title' in item or tile:
                         oldk = list(o)
                         try:
@@ -1511,11 +1486,15 @@ class PrimeVideo(Singleton):
                                                  (('__type' in x) and ('PaginatorNext' in x['__type']))), None)
                             elif 'queryParameters' in cnt['pagination']:
                                 q = cnt['pagination']['queryParameters']
-                                q = {k.replace('content', 'page').replace('targetId', 'paginationTargetId') if k in ['contentId', 'contentType', 'targetId']
-                                     else k: v for k, v in q.items()}
-                                if 'collectionType' not in q:
-                                    q['collectionType'] = 'Container'
-                                nextPage = '/gp/video/api/paginateCollection?' + urlencode(q)
+                                q = {k.replace('content', 'page') if k in ['contentId', 'contentType'] else k: v for k, v in q.items()}
+                                q.update({'isCleanSlateActive': '1', 'isDiscoverActive': '1', 'isLivePageActive': '1', 'variant': 'desktopWindows', 'payloadScheme': 'default'})
+                                t = json.loads(base64.b64decode(q['serviceToken']))
+                                if 'type' in t and 'vpage' in t['type']:
+                                    nextPage = '/gp/video/api/getLandingPage?' + urlencode(q, doseq=True)
+                                else:
+                                    q = {k.replace('targetId', 'paginationTargetId') if k in 'targetId' else k: v for k, v in q.items()}
+                                    q.update({'collectionType': 'Container'} if 'collectionType' not in q else {})
+                                    nextPage = '/gp/video/api/paginateCollection?' + urlencode(q, doseq=True)
                         elif cnt.get('hasMoreItems', False) and 'startIndex=' in requestURL:
                             idx = int(re.search(r'startIndex=(\d*)', requestURL).group(1))
                             nextPage = requestURL.replace('startIndex={}'.format(idx), 'startIndex={}'.format(idx+20))
