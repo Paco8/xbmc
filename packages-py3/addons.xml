@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <addons>
-<addon id="plugin.program.browser.launcher" name="Browser Launcher" version="1.2.5+matrix.1" provider-name="AddonScriptorDE + Sandmann79">
+<addon id="plugin.program.browser.launcher" name="Browser Launcher" version="1.2.6+matrix.1" provider-name="AddonScriptorDE + Sandmann79">
     <requires>
         <import addon="xbmc.python" version="3.0.0"/>
     </requires>
@@ -23,7 +23,7 @@
 </addon>
 <addon id="plugin.video.amazon-test"
        name="Amazon VOD"
-       version="0.9.6+matrix.1"
+       version="0.9.8+matrix.1"
        provider-name="Sandmann79, Varstahl">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
@@ -45,10 +45,16 @@
     <reuselanguageinvoker>true</reuselanguageinvoker>
     <summary lang="en_GB">Amazon Prime Video Streaming</summary>
     <summary lang="de_DE">Amazon Prime Instant Video</summary>
+    <summary lang="es_ES">Vídeo a demanda de Amazon Prime</summary>
+    <summary lang="ua_UA">Потокове відео Amazon Prime</summary>
     <description lang="en_GB">Movies and Television Shows for Prime Members</description>
     <description lang="de_DE">Filme und Serien für Amazon Prime Mitglieder</description>
+    <description lang="es_ES">Películas y Series para Miembros de Amazon Prime</description>
+    <description lang="ua_UA">Фільми та серіали для підписників Prime</description>
     <disclaimer lang="en_GB">Some parts of this addon may not be legal in your country of residence - please check with your local laws before installing.</disclaimer>
     <disclaimer lang="de_DE">Möglicherweise sind einge Teile dieses Addons in Ihrem Land illegal, Sie sollten dies unbedingt vor der Installation überprüfen.</disclaimer>
+    <disclaimer lang="es_ES">Algunas partes de este addon pueden que sean illegales en tu país de residencia - por favor, compruébalo antes de la instalación.</disclaimer>
+    <disclaimer lang="ua_UA">Деякі частини цього плагіну можуть бути незаконні в країні вашого проживання - будь ласка, перевірте це перед встановленням.</disclaimer>
     <forum>http://www.kodinerds.net/index.php/Thread/44211-Release-Amazon-Prime-Instant-Video</forum>
     <source>https://github.com/Sandmann79/xbmc</source>
     <license>GPL-3.0-or-later</license>
@@ -78,6 +84,24 @@
         <disclaimer></disclaimer>
         <platform>all</platform>
     </extension>
+</addon>
+<addon id="script.module.amazoncaptcha"
+       name="amazoncaptcha"
+       version="0.5.11+matrix.1"
+       provider-name="Anatolii Maliarov">
+  <requires>
+    <import addon="xbmc.python" version="3.0.0"/>
+    <import addon="script.module.pil" version="1.1.7"/>
+  </requires>
+  <extension point="xbmc.python.module" library="lib" />
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Pillow-based solver for Amazon's text captcha</summary>
+    <description lang="en_GB">Pillow-based solver for Amazon's text captcha</description>
+    <license>MIT License</license>
+    <platform>all</platform>
+    <website>https://github.com/a-maliarov/amazoncaptcha</website>
+    <source>https://github.com/a-maliarov/amazoncaptcha</source>
+  </extension>
 </addon>
 <addon id="script.module.mechanicalsoup"
 	name="MechanicalSoup"

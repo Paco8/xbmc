@@ -294,15 +294,16 @@ msgid "Miscellaneous"
 msgstr "שונות"
 
 msgctxt "#30071"
-msgid "Display TV-Show instead of Seasons in Watchlist"
-msgstr "הצגת סדרות במקום עונות ברשימת הצפייה"
+msgid "Show season overview immediately after selection"
+msgstr ""
 
 msgctxt "#30072"
 msgid "Verbose Logging"
 msgstr "רישום בעל פה"
 
+#, fuzzy
 msgctxt "#30073"
-msgid "Display Paid Content"
+msgid "Color Paid/Prime Content"
 msgstr "הצג תוכן בתשלום"
 
 msgctxt "#30074"
@@ -393,6 +394,14 @@ msgstr ""
 
 msgctxt "#30095"
 msgid "Reset addon home page to default"
+msgstr ""
+
+msgctxt "#30096"
+msgid "Load season/series infos in the background"
+msgstr ""
+
+msgctxt "#30097"
+msgid "Download the info for all seasons"
 msgstr ""
 
 msgctxt "#30100"
@@ -851,3 +860,7 @@ msgstr ""
 msgctxt "#30281"
 msgid "Archive created at {}"
 msgstr ""
+
+#~ msgctxt "#30071"
+#~ msgid "Display TV-Show instead of Seasons in Watchlist"
+#~ msgstr "הצגת סדרות במקום עונות ברשימת הצפייה"

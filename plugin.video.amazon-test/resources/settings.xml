@@ -30,12 +30,13 @@
         <setting id="enable_uhd" type="bool" label="UltraHD (Android + Widevine L1)" visible="eq(-20,3)" enable="System.Platform.Android" default="false"/>
         <setting id="enable_hdr10" type="bool" label="HDR10+ (Android + Widevine L1)" visible="eq(-21,3)" enable="System.Platform.Android" default="false"/>
         <setting id="enable_dovi" type="bool" label="Dolby Vision (Android + Widevine L1)" visible="eq(-22,3)" enable="System.Platform.Android" default="false"/>
-        <setting id="proxy_mpdalter" type="bool" label="30248" default="true" visible="eq(-23,3)" />
-        <setting id="skip_scene" type="enum" label="30081" lvalues="30082|30083|30084|30085|30086" default="1" visible="eq(-24,3)"/>
-        <setting id="send_vp" type="slider" label="30066" range="0,2,90" default="4" option="percent" visible="eq(-25,3)"/>
+        <setting id="use_h265" type="bool" label="30020" visible="eq(-23,3)" enable="System.Platform.Android" default="false"/>
+        <setting id="proxy_mpdalter" type="bool" label="30248" default="true" visible="eq(-24,3)" />
+        <setting id="skip_scene" type="enum" label="30081" lvalues="30082|30083|30084|30085|30086" default="1" visible="eq(-25,3)"/>
+        <setting id="send_vp" type="slider" label="30066" range="0,2,90" default="4" option="percent" visible="eq(-26,3)"/>
         <!-- Browser/Script -->
-        <setting id="remotectrl" type="bool" label="30074" default="false" visible="lt(-26,2)"/>
-        <setting id="remote_vol" type="bool" label="30075" default="false" subsetting="true" enable="eq(-1,true)" visible="lt(-27,2)"/>
+        <setting id="remotectrl" type="bool" label="30074" default="false" visible="lt(-27,2)"/>
+        <setting id="remote_vol" type="bool" label="30075" default="false" subsetting="true" enable="eq(-1,true)" visible="lt(-28,2)"/>
     </category>
     <!-- Language -->
     <category label="30021">
@@ -73,7 +74,7 @@
     </category>
     <!-- Datasource -->
     <category label="30273">
-        <setting id="data_source" type="enum" label="30273" values="Website" default="0"/>
+        <setting id="data_source" type="enum" label="30273" values="Website|Android" default="0"/>
         <setting id="pv_episode_thumbnails" type="bool" label="30249" visible="eq(-1,0)" default="true"/>
         <setting id="catalog_cache_expiry" type="enum" lvalues="30258|30259|30260|30261|30262|30263|30264|30265" label="30257" default="2" visible="eq(-2,0)" />
         <setting id="pv_clearcache" type="action" label="30087" action="RunPlugin(plugin://plugin.video.amazon-test/pv/clearcache/)" option="close" visible="eq(-3,0)" />
@@ -84,11 +85,13 @@
         <setting id="paginate_search" type="bool" label="30247" default="true" enable="eq(-3,false)" visible="eq(-8,0)" />
         <setting id="reset_home" type="action" label="30095" action="RunPlugin(plugin://plugin.video.amazon-test/pv/sethome/)" option="close" visible="eq(-9,0)" />
         <setting id="show_recents" type="bool" label="30036" default="true" visible="eq(-10,2)"/>
-        <setting id="paycont" type="bool" label="30073" default="false" visible="eq(-11,2)" />
-        <setting id="disptvshow" type="bool" label="30071" default="false" visible="eq(-12,2)" />
-        <setting label="Artwork" type="lsep" visible="eq(-13,2)"/>
-        <setting id="tld_episode_thumbnails" type="bool" label="30249" default="false" visible="eq(-14,2)"/>
-        <setting type="action" label="30094" action="" visible="eq(-15,2)" />
+        <setting id="paycont" type="bool" label="30073" default="false" visible="eq(-11,1)" />
+        <setting id="disptvshow" type="bool" label="30071" default="false" visible="eq(-12,1)" />
+        <setting id="preload_seasons" type="bool" label="30096" default="true" visible="eq(-13,1)" enable="eq(-1,true)"/>
+        <setting id="preload_all_seasons" type="bool" label="30097" default="false" visible="eq(-14,1)" enable="eq(-1,true)" subsetting="true"/>
+        <setting label="Artwork" type="lsep" visible="eq(-15,2)"/>
+        <setting id="tld_episode_thumbnails" type="bool" label="30249" default="false" visible="eq(-16,2)"/>
+        <setting type="action" label="30094" action="" visible="eq(-17,2)" />
     </category>
     <!-- Views -->
     <category label="30015">
