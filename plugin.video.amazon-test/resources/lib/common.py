@@ -191,6 +191,7 @@ class Settings(Singleton):
         elif 'useEpiThumbs' == name: return self._gs('tld_episode_thumbnails') == 'true'
         elif 'bypassProxy' == name: return self._gs('proxy_mpdalter') == 'false'
         elif 'use_h265' == name: return self._gs('use_h265') == 'true'
+        elif 'freezeCache' == name: return self._gs('pv_freeze_cache') == 'true'
         elif 'skip_scene' == name: return int('0' + self._gs('skip_scene'))
         elif 'pagination' == name: return {
             'all': self._gs('paginate_everything') == 'true',

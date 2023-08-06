@@ -179,8 +179,9 @@ class PrimeVideo(Singleton):
             try:
                 with open(self._catalogCache, 'rb') as fp:
                     cached = pickle.load(fp)
-                if time.time() < cached['expiration']:
+                if time.time() < cached['expiration'] or self._s.freezeCache:
                     self._catalog = cached
+                    self._g.dialog.notification('Amazon VOD', 'Using cache', xbmcgui.NOTIFICATION_INFO, 1000)
             except:
                 Log('Removing corrupted cache file “{}”'.format(self._catalogCache), Log.DEBUG)
                 delete(self._catalogCache)
