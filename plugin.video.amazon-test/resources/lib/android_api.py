@@ -2,20 +2,29 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 import os.path
+import re
+import time
+import json
+from copy import deepcopy
 
-from datetime import date
+from kodi_six import xbmcgui, xbmc, xbmcplugin
+
+from .singleton import Singleton
+from .common import findKey, MechanizeLogin
+from .logging import LogJSON, Log
+from .ages import AgeRestrictions
+from .network import getURL, getATVData, LocaleSelector
+from .login import refreshToken
+from .itemlisting import addDir, addVideo, setContentAndView
+from .users import loadUser, updateUser
+from .configs import writeConfig
+from .l10n import getString
 
 try:
-    from urllib.parse import quote_plus
+    from urllib.parse import quote_plus, urlencode, parse_qs
 except ImportError:
-    from urllib import quote_plus
-
-from .ages import AgeRestrictions
-from .singleton import Singleton
-from .network import *
-from .itemlisting import *
-from .users import *
-from .common import findKey
+    from urllib import quote_plus, urlencode
+    from urlparse import parse_qs
 
 
 class PrimeVideo(Singleton):
@@ -30,7 +39,7 @@ class PrimeVideo(Singleton):
         self.prime = ''
         self.filter = {}
         self.lang = loadUser('lang')
-        self.def_dtid = 'A43PXU4ZN2AL1'
+        self.def_dtid = self._g.dtid_android
         self.defparam = 'deviceTypeID={}' \
                         '&firmware=fmw:22-app:3.0.351.3955' \
                         '&softwareVersion=351' \
@@ -43,7 +52,7 @@ class PrimeVideo(Singleton):
                         '&osLocale={}&uxLocale={}' \
                         '&supportsPKMZ=false' \
                         '&isLiveEventsV2OverrideEnabled=true' \
-                        '&swiftPriorityLevel=critical'.format(self.def_dtid, g.deviceID, self.lang, self.lang)
+                        '&swiftPriorityLevel=critical'.format(self.def_dtid, self._g.deviceID, self.lang, self.lang)
 
     def BrowseRoot(self):
         cm_wl = [(getString(30185) % 'Watchlist', 'RunPlugin(%s?mode=getListMenu&url=%s&export=1)' % (self._g.pluginid, self._g.watchlist))]
@@ -84,14 +93,14 @@ class PrimeVideo(Singleton):
             cm.append((getString(30182), 'Container.Update(%s?%s)' % (self._g.pluginid, u)))
         return cm
 
-    def getPage(self, page='home', params='pageType=home&pageId=home', pagenr=1, root=False):
+    def getPage(self, page='home', params='&pageType=home&pageId=home', pagenr=1, root=False):
         url_path = ['', '/cdp/mobile/getDataByTransform/v1/', '/cdp/switchblade/android/getDataByJvmTransform/v1/']
         url_dict = {'home': {'p': 2, 'js': 'dv-android/landing/initial/v1.kt', 'q': ''},
                     'landing': {'p': 2, 'js': 'dv-android/landing/initial/v1.kt', 'q': '&removeFilters=false'},
                     'browse': {'p': 1, 'js': 'dv-android/browse/v2/browseInitial.js', 'q': ''},
                     'detail': {'p': 1, 'js': 'dv-android/detail/v2/user/v2.5.js', 'q': '&capabilities='},
                     'details': {'p': 1, 'js': 'android/atf/v3.jstl', 'q': '&capabilities='},
-                    'watchlist': {'p': 1, 'js': 'dv-android/watchlist/watchlistInitial/v3.js', 'q': ''},
+                    'watchlist': {'p': 1, 'js': 'dv-android/watchlist/watchlistInitial/v3.js', 'q': '&appendTapsData=true'},
                     'library': {'p': 1, 'js': 'dv-android/library/libraryInitial/v2.js', 'q': ''},
                     'find': {'p': 1, 'js': 'dv-android/find/v1.js', 'q': '&pageId=findv2&pageType=home'},
                     'search': {'p': 1, 'js': 'dv-android/search/searchInitial/v3.js', 'q': ''},
@@ -103,12 +112,13 @@ class PrimeVideo(Singleton):
             resp = self.loadCache(params)
         else:
             pg = url_dict.get(page, url_dict['home'])
-            url = self._g.ATVUrl + url_path[pg['p']] +pg['js']
+            url = self._g.ATVUrl + url_path[pg['p']] + pg['js']
             params += pg['q']
+            params = '&' + params if not params.startswith('&') else params
             query_dict = parse_qs(params)
             url = url.replace('Initial', 'Next') if 'Initial' in url and int(query_dict.get('startIndex', ['0'])[0]) > 0 else url
             url = url.replace('initial', 'next') if 'initial' in url and 'startIndex' in query_dict else url
-            resp = getURL('%s?%s&%s' % (url, self.defparam, params), useCookie=MechanizeLogin(True), headers=self._g.headers_android)
+            resp = getURL('%s?%s%s' % (url, self.defparam, params), useCookie=MechanizeLogin(True), headers=self._g.headers_android)
         LogJSON(resp)
 
         if resp:
@@ -127,7 +137,7 @@ class PrimeVideo(Singleton):
             if page in ['watchlist', 'library'] and 'Initial' in url and 'serviceToken' not in query_dict:
                 for k, v in self.filter.items():
                     addDir(k, 'getPage', page, opt=urlencode(v))
-                xbmcplugin.endOfDirectory(g.pluginhandle)
+                xbmcplugin.endOfDirectory(self._g.pluginhandle)
                 return
 
             if page == 'details':
@@ -183,7 +193,7 @@ class PrimeVideo(Singleton):
                     if facetxt is not None:
                         isprime = prdata.get('offerClassification', '') == 'PRIME'
                         isincl = item.get('containerMetadata', {}).get('entitlementCues', {}).get('entitledCarousel', 'Entitled') == 'Entitled'
-                        if self._s.payCont:
+                        if self._s.paycont:
                             if isprime:
                                 facetxt = '[COLOR {}]{}[/COLOR]'.format(self._g.PrimeCol, facetxt)
                             if isincl is False:
@@ -202,6 +212,7 @@ class PrimeVideo(Singleton):
                 pgmodel = titles.get('paginationModel')
                 pgtype = page
                 col = titles.get('collectionItemList', [])
+                asinlist = []
 
                 for item in col:
                     model = item['model']
@@ -219,8 +230,10 @@ class PrimeVideo(Singleton):
                         if ct in ['movie', 'episode', 'live', 'videos']:
                             addVideo(self.formatTitle(il), il['asins'], il, cm=cm)
                         else:
-                            pgnr = -1 if self._s.dispShowOnly and ct in 'season' else 1
-                            addDir(self.formatTitle(il), 'getPage', 'details', infoLabels=il, opt='itemId=' + il['asins'], cm=cm, page=pgnr)
+                            pgnr = -1 if self._s.disptvshow and ct in 'season' else 1
+                            if not il['asins'] in asinlist:
+                                asinlist.append(il['asins'])
+                                addDir(self.formatTitle(il), 'getPage', 'details', infoLabels=il, opt='itemId=' + il['asins'], cm=cm, page=pgnr)
 
             if pgmodel and page != 'cache':
                 nextp = findKey('parameters', pgmodel)
@@ -232,7 +245,7 @@ class PrimeVideo(Singleton):
                 else:
                     nextp['pageSize'] = len(col)
                     pagenr = int(nextp['startIndex'] / len(col) + 1)
-                addDir(' --= %s =--' % (getString(30111) % pagenr), 'getPage', pgtype, opt=urlencode(nextp), page=pagenr, thumb=self._s.NextIcon)
+                addDir(' --= %s =--' % (getString(30111) % pagenr), 'getPage', pgtype, opt=urlencode(nextp), page=pagenr, thumb=self._g.NextIcon)
 
             setContentAndView(ct)
             xbmc.executebuiltin('RunPlugin(%s?mode=processMissing)' % self._g.pluginid)
@@ -243,7 +256,7 @@ class PrimeVideo(Singleton):
         if il['contentType'] in 'episode':
             if il['episode'] > 0:
                 name = '{}. {}'.format(il['episode'], name)
-        if not il['isPrime'] and self._s.payCont:
+        if not il['isPrime'] and self._s.paycont:
             name = '[COLOR %s]%s[/COLOR]' % (self._g.PayCol, name)
         return name
 
@@ -277,7 +290,7 @@ class PrimeVideo(Singleton):
                 cPath = xbmc.getInfoLabel('Container.FolderPath')
                 xbmc.executebuiltin('Container.Update("{}", replace)'.format(cPath))
         else:
-            g.dialog.notification(g.__plugin__, msg, xbmcgui.NOTIFICATION_ERROR)
+            self._g.dialog.notification(self._g.__plugin__, msg, xbmcgui.NOTIFICATION_ERROR)
 
     def _createDB(self, table):
         c = self._cacheDb.cursor()
@@ -334,8 +347,8 @@ class PrimeVideo(Singleton):
         asins = infoLabels['asins']
         infoLabels['banner'] = None
         season = int(infoLabels.get('season', -2))
-        series = contentType == 'season' and self._s.dispShowOnly
-        series_art = season > -1 and self._s.showfanart and self._s.tmdb_art != 0
+        series = contentType == 'season' and self._s.disptvshow
+        series_art = season > -1 and self._s.useshowfanart and self._s.tmdb_art != 0
         extra = ' and season = %s' % season if season > -2 else ''
         for asin in asins.split(','):
             j = None
@@ -503,7 +516,7 @@ class PrimeVideo(Singleton):
             infoLabels['duration'] = item['runtimeMillis'] / 1000
         if item.get('runtimeSeconds'):
             infoLabels['duration'] = item['runtimeSeconds']
-        if 'season' in ct and 'tvshowtitle' in infoLabels and self._s.dispShowOnly and noart is False:
+        if 'season' in ct and 'tvshowtitle' in infoLabels and self._s.disptvshow and noart is False:
             infoLabels['title'] = infoLabels['tvshowtitle']
             infoLabels['plot'] = '{}\n\n{}'.format(getString(30253).format(infoLabels['totalseasons']), infoLabels['plot'])
         if 'episode' in ct:
@@ -517,7 +530,17 @@ class PrimeVideo(Singleton):
             else:
                 infoLabels['mpaa'] = '%s %s' % (AgeRestrictions().GetAgeRating(), item['regulatoryRating'])
         if 'live' in ct:
-            infoLabels['contentType'] = infoLabels['mediatype'] = 'videos'
+            ct = 'videos'
+            liveData = findKey('data', item)
+            if liveData:
+                if liveData.get('liveState', '') == 'LIVE':
+                    ct = 'live'
+                s = liveData.get('startTime') / 1000
+                e = liveData.get('endTime') / 1000
+                infoLabels['plot'] = '[B]{:%x - %X}[/B]\n\n{}'.format(datetime.fromtimestamp(s), infoLabels['plot'])
+                infoLabels['premiered'] = datetime.fromtimestamp(s).strftime('%Y-%m-%d')
+                infoLabels['duration'] = e - s
+            infoLabels['contentType'] = infoLabels['mediatype'] = ct
             infoLabels['isPrime'] = True
         return infoLabels
 
@@ -595,12 +618,14 @@ class PrimeVideo(Singleton):
         return active, profiles
 
     def switchProfile(self):
+        exit()
         active, profiles = self.getProfiles()
         if active is not False:
             ret = self._g.dialog.select('Amazon', [i[0] for i in profiles])
             if ret >= 0 and ret != active:
                 if refreshToken(loadUser(), profiles[ret][1]):
                     exit()
+        exit()
 
     def languageselect(self):
         loc, lang = LocaleSelector()
@@ -612,7 +637,7 @@ class PrimeVideo(Singleton):
                       '&deviceID={}'
                       '&locale={}&osLocale={}&uxLocale={}'
                       '&version=1'
-                      '&preferenceType=IMPLICIT'.format(self._g.ATVUrl, self.def_dtid, g.deviceID, loc, loc, loc), headers=self._g.headers_android, postdata='')
+                      '&preferenceType=IMPLICIT'.format(self._g.ATVUrl, self.def_dtid, self._g.deviceID, loc, loc, loc), headers=self._g.headers_android, postdata='')
         if resp.get('success', False):
             updateUser('lang', loc)
             Log('Text language changed to [{}] {}'.format(loc, lang), Log.DEBUG)
@@ -622,7 +647,7 @@ class PrimeVideo(Singleton):
             searchString = args.get('searchstring')
             self.Search(searchString)
         elif mode in ['processMissing', 'switchProfile', 'languageselect']:
-            exec ('g.pv.{}()'.format(mode))
+            exec ('self._g.pv.{}()'.format(mode))
         elif mode == 'ageSettings':
             AgeRestrictions().Settings()
         elif mode == 'getPage':
