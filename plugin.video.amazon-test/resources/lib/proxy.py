@@ -42,7 +42,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
         except:
             p1 = langCode
             p2 = langCode
-        if 1 == count:
+        if 1 == count and p1 not in ['yue', 'cmn']:
             return p1.lower()
         localeConversionTable = {
             'ar' + separator + '001': 'ar',
@@ -56,11 +56,13 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
             'ko' + separator + 'KR': 'ko',
             'nb' + separator + 'NO': 'nb',
             'sv' + separator + 'SE': 'sv',
-            'pt' + separator + 'BR': 'pt' + separator + 'Brazil'
+            'pt' + separator + 'BR': 'pt' + separator + 'Brazil',
+            'yue': 'zh' + separator + 'Cantonese',
+            'cmn' + separator + 'CN': 'zh' + separator + 'CN',
+            'cmn' + separator + 'TW': 'zh' + separator + 'TW'
         }
         new_lang = p1.lower() + ('' if p1 == p2 else separator + p2.upper())
-        new_lang = new_lang if new_lang not in localeConversionTable.keys() else localeConversionTable[new_lang]
-        return new_lang
+        return localeConversionTable.get(new_lang, new_lang)
 
     def _ParseBaseRequest(self, method):
         """Return path, headers and post data commonly required by all methods"""
@@ -230,6 +232,10 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
             Log('[PS] Invalid request received', Log.DEBUG)
             self.send_error(501, 'Invalid request')
 
+    @staticmethod
+    def split_lang(lng):
+        return lng.split('-' if '-' in lng else '_')[0]
+
     def _AlterGPR(self, endpoint, headers, data):
         """ GPR data alteration for better language parsing and subtitles streaming instead of pre-caching """
 
@@ -253,7 +259,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
         for sub_type in list(langCount):  # list() instead of .keys() to avoid py3 iteration errors
             if sub_type in content:
                 for i in range(0, len(content[sub_type])):
-                    lang = content[sub_type][i]['languageCode'][0:2]
+                    lang = self.split_lang(content[sub_type][i]['languageCode'])
                     if lang not in langCount[sub_type]:
                         langCount[sub_type][lang] = 0
                     langCount[sub_type][lang] += 1
@@ -265,7 +271,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
         for sub_type in list(langCount):  # list() instead of .keys() to avoid py3 iteration errors
             if sub_type in content:
                 for i in range(0, len(content[sub_type])):
-                    fn = self._AdjustLocale(content[sub_type][i]['languageCode'], langCount[sub_type][content[sub_type][i]['languageCode'][0:2]])
+                    fn = self._AdjustLocale(content[sub_type][i]['languageCode'], langCount[sub_type][self.split_lang(content[sub_type][i]['languageCode'])])
                     variants = '{}{}'.format(
                         '-[CC]' if 'sdh' == content[sub_type][i]['type'] else '',
                         '.Forced' if 'forcedNarratives' == sub_type else ''
@@ -279,7 +285,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
                         variants,
                         subtitle_format
                     )
-                    cl = py2_decode(convertLanguage(fn[0:2], ENGLISH_NAME))
+                    cl = py2_decode(convertLanguage(self.split_lang(fn), ENGLISH_NAME))
                     newsubs.append((content[sub_type][i], cl, fn, variants, escapedurl))
                 del content[sub_type]  # Reduce the data transfer by removing the lists we merged
 
@@ -317,6 +323,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
             data = data.replace('<BaseURL>', '<BaseURL>' + baseurl)
             data = re.sub(r'(<SegmentTemplate\s+[^>]*?\s*media=")', r'\1' + baseurl, data)
             data = re.sub(r'(<SegmentTemplate\s+[^>]*?\s*initialization=")', r'\1' + baseurl, data)
+            data = re.sub(r'<Role[^>]*>', '', data)
             return data
 
         # Start the chunked reception
@@ -351,7 +358,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
                 if lang not in languages:
                     languages.append(lang)
             for lang in languages:
-                lang = lang[0:2]
+                lang = self.split_lang(lang)
                 if lang not in langCount:
                     langCount[lang] = 0
                 langCount[lang] += 1
@@ -364,19 +371,38 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
                     break
                 # Log('[PS] AdaptationSet position: ([{}:{}], [{}:{}])'.format(pos.start(1), pos.end(1), pos.start(2), pos.end(2)))
                 setTag = buffer[pos.start(1):pos.end(1)]
-                try:
-                    trackId = re.search(r'\s+audioTrackId="([a-z]{2})(-[a-z0-9]{2,})_(dialog|descriptive)', setTag).groups()
-                    lang = re.search(r'\s+lang="([a-z]{2})"', setTag).group(1)
+                setData = buffer[pos.start(2):pos.end(2)]
 
-                    newLocale = self._AdjustLocale(trackId[0] + trackId[1], langCount[trackId[0]])
-                    if 'descriptive' == trackId[2]:
-                        newLocale += (' ' if '-' in newLocale else '-') + '[Audio Description]'
-                    setTag = setTag.replace('lang="{}"'.format(lang), 'lang="{}"'.format(newLocale))
-                except:
-                    pass
+                trackId = re.search(r'\s+audioTrackId="([^_]+)_(dialog|descriptive)', setTag)
+                if trackId is not None:
+                    trackId = trackId.groups()
+                    lang = re.search(r'\s+lang="([^"]+)"', setTag).group(1)
+                    imp = ' impaired="true"' if 'descriptive' == trackId[1] else ''
+                    newLocale = self._AdjustLocale(trackId[0], langCount[self.split_lang(trackId[0])])
+                    setTag = setTag.replace('lang="{}"'.format(lang), 'lang="{}"{}'.format(newLocale, imp))
+ 
+                repres = re.findall(r'<Representation[^>]*>.*?</Representation>', setData, flags=re.DOTALL)
+                if len(repres):
+                    best_br = 0
+                    best_tr = ''
+                    found_atmos = False
+                    while 0 < len(repres):
+                        track = repres.pop(0)
+                        atmos = re.search(r'<SupplementalProperty[^>]*value="JOC"[^>]*>', track)
+                        bitrate = int(re.search(r'\s+bandwidth="([^"]+)"', track).group(1))
+                        if atmos and not found_atmos:
+                            found_atmos = True
+                            best_br = 0
+                        if bitrate > best_br:
+                            if (atmos and found_atmos) or (not atmos and not found_atmos) or self.server._s.enable_atmos is False:
+                                best_tr = track
+                                best_br = bitrate
+                        setData = setData.replace(track, '' if 0 < len(repres) else best_tr)
+                    setTag = re.sub(r' (min|max)Bandwidth="[^"]+"', '', setTag)
+                    setTag = '{} name="{} kbps">'.format(setTag[:-1], int(best_br / 1000))
 
                 self._SendChunk(gzstream, setTag)
-                self._SendChunk(gzstream, _rebase(buffer[pos.start(2):pos.end(2)]))
+                self._SendChunk(gzstream, _rebase(setData))
                 buffer = buffer[pos.end(2):]
 
             # Send the rest and signal EOT
