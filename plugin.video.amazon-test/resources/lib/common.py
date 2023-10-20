@@ -160,7 +160,7 @@ class Settings(Singleton):
     _ret_types = {_integer: ['playmethod', 'browser', 'items_perpage', 'tvdb_art', 'tmdb_art', 'region', 'skip_scene', 'data_source', 'send_vp'],
                   _bool_true:
                       ['useshowfanart', 'disptvshow', 'paycont', 'logging', 'json_dump', 'json_dump_collisions', 'sub_stretch', 'log_http', 'remotectrl',
-                       'remote_vol', 'multiuser', 'wl_export', 'audio_description', 'pv_episode_thumbnails', 'tld_episode_thumbnails', 'use_h265',
+                       'remote_vol', 'multiuser', 'wl_export', 'audio_description', 'pv_episode_thumbnails', 'tld_episode_thumbnails', 'use_h265', 'enable_atmos',
                        'profiles', 'show_pass', 'enable_uhd', 'show_recents', 'register_device', 'preload_seasons', 'preload_all_seasons', 'wvl1_device'],
                   _bool_false: ['json_dump_raw', 'ssl_verif', 'proxy_mpdalter']}
 
@@ -198,6 +198,8 @@ class Settings(Singleton):
             return [3600, 21600, 43200, 86400, 259200, 604800, 1296000, 2592000][int(self._gs('catalog_cache_expiry'))]
         elif 'proxyaddress' == name:
             return getConfig('proxyaddress')
+        elif 'wvl1_device' == name and getConfig('autoWV', 0) == 0:
+            return detectWidevine()
 
         value = None
         for cmd in self._ret_types:
@@ -323,6 +325,23 @@ def MechanizeLogin(preferToken=False):
 
 
 def parseHTML(br):
+    from .logging import Log
+    Log(br.get_url(), Log.DEBUG)
     soup = br.get_current_page()
     response = soup.__unicode__()
     return response, soup
+
+
+def detectWidevine():
+    try:
+        import xbmcdrm
+        from .logging import Log
+        crypto_session = xbmcdrm.CryptoSession('edef8ba9-79d6-4ace-a3c8-27dcd51d21ed', 'AES/CBC/NoPadding', 'HmacSHA256')
+        sec_level = crypto_session.GetPropertyString('securityLevel')
+        Log('Detected Widevine security level: {}'.format(sec_level, Log.DEBUG))
+        res = sec_level.upper() == 'L1'
+    except:
+        res = False
+    Settings().wvl1_device = str(res).lower()
+    writeConfig('autoWV', '1')
+    return res
