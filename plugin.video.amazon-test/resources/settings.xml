@@ -34,7 +34,7 @@
         <setting id="enable_atmos" type="bool" label="Dolby Atmos" visible="eq(-24,3) + eq(-4,true)" enable="eq(2,true)" default="false" subsetting="true"/>
         <setting id="use_h265" type="bool" label="30020" visible="eq(-25,3) + eq(-5,true)" default="false" subsetting="true"/>
         <setting id="proxy_mpdalter" type="bool" label="30248" default="true" visible="eq(-26,3)"/>
-        <setting id="skip_scene" type="enum" label="30081" lvalues="30082|30083|30084|30085|30086" default="1" visible="eq(-27,3)"/>
+        <setting id="skip_scene" type="enum" label="30081" lvalues="30082|30083|30084|30085|30086" default="0" visible="eq(-27,3)"/>
         <setting id="send_vp" type="slider" label="30066" range="0,2,90" default="4" option="percent" visible="eq(-28,3)"/>
         <!-- Browser/Script -->
         <setting id="remotectrl" type="bool" label="30074" default="false" visible="lt(-29,2)"/>
@@ -50,8 +50,8 @@
         <setting id="sub_stretch" type="bool" label="30028" default="false"/>
         <setting id="sub_stretch_factor" type="enum" values="FILM/NTSC (24/23.976)|NTSC/FILM (23.976/24)|PAL/NTSC (25/23.976)|NTSC/PAL (23.976/25)|PAL/FILM (25/24)|FILM/PAL (24/25)" label="30027" default="0" enable="eq(-1,true)" subsetting="true"/>
         <setting id="ssa_settings" label="$ADDON[script.module.ttml2ssa 32201]" type="action" option="close" action="Addon.OpenSettings(script.module.ttml2ssa)"/>
-        <!-- PrimeVideo -->
-        <setting label="30250" type="lsep"/>
+        <!-- Menu -->
+        <setting type="sep"/>
         <setting id="pv_language" type="action" label="30025" action="RunPlugin(plugin://plugin.video.amazon-test/pv/languageselect/)" option="close"/>
     </category>
     <!-- Connection -->
