@@ -63,6 +63,7 @@ class PrimeVideo(Singleton):
         for i, s in enumerate(self._TextCleanPatterns):
             self._TextCleanPatterns[i][0] = re.compile(s[0])
 
+        self._home_path = getConfig('home', 'root')
         self._LoadCache()
 
     def _Flush(self, bFlushCacheData=True, bFlushVideoData=False):
@@ -178,7 +179,9 @@ class PrimeVideo(Singleton):
                 }
 
     def Route(self, verb, path):
-        if 'search' == verb: self._g.pv.Search()
+        if 'search' == verb:
+            self._g.pv.DeleteCache(1)
+            self._g.pv.BrowseRoot()
         elif 'browse' == verb: self._g.pv.Browse(path)
         elif 'refresh' == verb: self._g.pv.Refresh(path)
         elif 'profiles' == verb: self._g.pv.Profile(path)
@@ -295,8 +298,8 @@ class PrimeVideo(Singleton):
         if 0 == len(self._catalog):
             ''' Build the root catalog '''
             if not self.BuildRoot():
-                return
-        self.Browse(getConfig('home', 'root'))
+                exit()
+        self.Browse(self._home_path)
 
     def BuildRoot(self, home=None):
         """ Parse the top menu on primevideo.com and build the root catalog """
@@ -381,7 +384,7 @@ class PrimeVideo(Singleton):
                 query = query if not query else query + '&'
                 self._catalog['root']['Search'] = {
                     'title': self._BeautifyText(title),
-                    'verb': 'pv/search/',
+                    'verb': '?mode=Search',
                     'endpoint': '{}?{}phrase={{}}'.format(sfa['partialURL'], query)
                 }
             except:
@@ -389,7 +392,7 @@ class PrimeVideo(Singleton):
         else:
             self._catalog['root']['Search'] = {
                 'title': getString(30108),
-                'verb': 'pv/search/',
+                'verb': '?mode=Search',
                 'endpoint': '/gp/video/search?phrase={}'
             }
 
@@ -439,7 +442,7 @@ class PrimeVideo(Singleton):
                 writeConfig('exporting', '')
 
         # Add multiuser menu if needed
-        if self._s.multiuser and ('root' == path) and (1 < len(loadUsers())):
+        if self._s.multiuser and (self._home_path == path) and (1 < len(loadUsers())):
             addDir(getString(30134).format(loadUser('name')), '', 'pv/browse/root{}SwitchUser'.format(self._separator), cm=self._g.CONTEXTMENU_MULTIUSER)
         if ('root' + self._separator + 'SwitchUser') == path:
             if switchUser():
@@ -448,7 +451,7 @@ class PrimeVideo(Singleton):
             return
 
         # Add Profiles
-        if self._s.profiles and ('root' == path) and ('profiles' in self._catalog):
+        if self._s.profiles and (self._home_path == path) and ('profiles' in self._catalog):
             activeProfile = self._catalog['profiles'][self._catalog['profiles']['active']]
             addDir(activeProfile['title'], 'True', 'pv/profiles/list', activeProfile['metadata']['artmeta'])
 
@@ -456,6 +459,12 @@ class PrimeVideo(Singleton):
             node, breadcrumb = self._TraverseCatalog(path)
             if None is node:
                 return
+
+            if (self._home_path == path) and path != 'root':
+                for n in ['Watchlist', 'Search']:
+                    cat = deepcopy(self._catalog['root'][n])
+                    cat['pos'] = 0
+                    node.update({n: cat})
 
             # Populate children list with empty references
             nodeName = breadcrumb[-1]
@@ -480,7 +489,7 @@ class PrimeVideo(Singleton):
             else:
                 entry = node[key]
             title = entry.get('title', nodeName)
-            itemPathURI = '{}{}{}'.format(path, self._separator, quote_plus(key.encode('utf-8')))
+            itemPathURI = '{}{}{}'.format(path if key not in 'Watchlist' else 'root', self._separator, quote_plus(key.encode('utf-8')))
             ctxitems = []
 
             # Squash single season tv shows
@@ -580,7 +589,8 @@ class PrimeVideo(Singleton):
                             infoLabel['plot'] = '{:%H:%M} - {:%H:%M}  {}\n\n{}'.format(dt.fromtimestamp(us), dt.fromtimestamp(ue),
                                                                                        shm.get('title', ''), shm.get('synopsis', ''))
             else:
-                ctxitems.append((getString(30271), 'RunPlugin({}pv/sethome/{})'.format(self._g.pluginid, quote_plus(itemPathURI))))
+                if itemPathURI:
+                    ctxitems.append((getString(30271), 'RunPlugin({}pv/sethome/{})'.format(self._g.pluginid, quote_plus(itemPathURI))))
                 if itemPathURI.split(self._separator)[-3:] == ['root', 'Watchlist', 'watchlist']:
                     ctxitems.append((getString(30185) % 'Watchlist', 'RunPlugin({}pv/browse/{}/export={})'.format(self._g.pluginid, itemPathURI, 4)))
                     ctxitems.append((getString(30186), 'UpdateLibrary(video)'))
@@ -617,14 +627,8 @@ class PrimeVideo(Singleton):
             writeConfig('exporting', '')
             Log('Export finished')
 
-    def Search(self, searchString=None):
+    def Search(self, searchString):
         """ Provide search functionality for PrimeVideo """
-        if searchString is None:
-            searchString = self._g.dialog.input(getString(24121)).strip(' \t\n\r')
-        if 0 == len(searchString):
-            xbmcplugin.endOfDirectory(self._g.pluginhandle, succeeded=False)
-            return
-        Log('Searching "{}"…'.format(searchString), Log.INFO)
         self._catalog['search'] = OrderedDict([('lazyLoadURL', self._catalog['root']['Search']['endpoint'].format(searchString))])
         self.Browse('search', True)
 
@@ -1374,7 +1378,7 @@ class PrimeVideo(Singleton):
                             o[id] = {'title': tile, 'lazyLoadURL': iu, 'metadata': {'artmeta': {'thumb': findKey('url', tile_cov)}}}
                         elif ('liveInfo' in item) or ('event' == t):
                             AddLiveEvent(o, item, iu)
-                        elif 'season' != t and 'season' not in item:
+                        elif t not in ['season', 'show'] and 'season' not in item and 'show' not in item:
                             bUpdatedVideoData |= ParseSinglePage(breadcrumb[-1], o, bCacheRefresh, url=iu)
                         else:
                             bUpdatedVideoData |= AddSeason(breadcrumb[-1], o, bCacheRefresh, iu)

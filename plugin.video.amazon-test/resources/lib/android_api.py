@@ -6,14 +6,16 @@ import re
 import time
 import json
 from copy import deepcopy
+from sqlite3 import dbapi2 as sqlite
+from threading import Thread
 
 from kodi_six import xbmcgui, xbmc, xbmcplugin
 
 from .singleton import Singleton
-from .common import findKey, MechanizeLogin
+from .common import findKey, MechanizeLogin, get_key
 from .logging import LogJSON, Log
 from .ages import AgeRestrictions
-from .network import getURL, getATVData, LocaleSelector
+from .network import getURL, LocaleSelector
 from .login import refreshToken
 from .itemlisting import addDir, addVideo, setContentAndView
 from .users import loadUsers, loadUser, updateUser
@@ -38,7 +40,6 @@ class PrimeVideo(Singleton):
         self._createDB(self._art_tbl)
         self.days_since_epoch = lambda: int(time.time() / 86400)
         self.prime = ''
-        self.filter = {}
         self.def_ps = 20
         self.lang = loadUser('lang')
         self.def_dtid = self._g.dtid_android
@@ -47,14 +48,15 @@ class PrimeVideo(Singleton):
                         '&softwareVersion=351' \
                         '&priorityLevel=2' \
                         '&format=json' \
-                        '&featureScheme=mobile-android-features-v11' \
+                        '&featureScheme=mobile-android-features-v11-hdr' \
                         '&deviceID={}' \
                         '&version=1' \
-                        '&screenWidth=sw800dp' \
+                        '&screenWidth=sw1600dp' \
                         '&osLocale={}&uxLocale={}' \
                         '&supportsPKMZ=false' \
                         '&isLiveEventsV2OverrideEnabled=true' \
                         '&swiftPriorityLevel=critical'.format(self.def_dtid, self._g.deviceID, self.lang, self.lang)
+        self._art_thread = Thread(target=self.processMissing)
 
     def BrowseRoot(self):
         cm_wl = [(getString(30185) % 'Watchlist', 'RunPlugin(%s?mode=getPage&url=%s&export=1)' % (self._g.pluginid, self._g.watchlist))]
@@ -70,9 +72,11 @@ class PrimeVideo(Singleton):
         addDir(getString(30100), 'getPage', self._g.library, cm=cm_lb)
         addDir('Genres', 'getPage', 'find')
         addDir(getString(30108), 'Search', '')
-        xbmcplugin.endOfDirectory(self._g.pluginhandle, updateListing=False, cacheToDisc=False)
+        xbmcplugin.endOfDirectory(self._g.pluginhandle, updateListing=False)
 
-    def getFilter(self, resp, root):
+    @staticmethod
+    def getFilter(resp):
+        flt = {}
         filters = findKey('filters', resp)
         if len(filters) > 0 and 'refineCollection' in filters[0]:
             filters = filters[0]['refineCollection']
@@ -81,7 +85,8 @@ class PrimeVideo(Singleton):
             if 'text' in item and item['text'] is not None:
                 d = findKey('parameters', item)
                 d['swiftId'] = item['id']
-                self.filter[item['text']] = d
+                flt[item['text']] = d
+        return flt
 
     def addCtxMenu(self, il, wl, pgmod=1):
         cm = []
@@ -133,7 +138,7 @@ class PrimeVideo(Singleton):
 
         if resp:
             resp = resp.get('resource', resp)
-            self.getFilter(resp, root)
+            flt = self.getFilter(resp)
             if root:
                 self._createDB(self._cache_tbl)
                 for item in resp['navigations']:
@@ -147,7 +152,7 @@ class PrimeVideo(Singleton):
             if page in ['watchlist', 'library'] and 'Initial' in url and 'serviceToken' not in query_dict:
                 if export:
                     Log('Export of watchlist started')
-                for k, v in self.filter.items():
+                for k, v in flt.items():
                     addDir(k, 'getPage', page, opt=urlencode(v), export=export)
                 if not export:
                     xbmcplugin.endOfDirectory(self._g.pluginhandle)
@@ -171,14 +176,16 @@ class PrimeVideo(Singleton):
                     for item in resp['episodes']:
                         il = self.getInfos(item, resp)
                         cm = self.addCtxMenu(il, page in 'watchlist')
-                        addVideo(self.formatTitle(il), il['asins'], il, cm=cm, export=export)
+                        if (self._s.hide_trailers and il.get('episode', 0) > 0) or (not self._s.hide_trailers):
+                            addVideo(self.formatTitle(il), il['asins'], il, cm=cm, export=export)
                 else:
                     il = self.getInfos(resp)
                     cm = self.addCtxMenu(il, page in 'watchlist')
                     addVideo(self.formatTitle(il), il['asins'], il, cm=cm, export=export)
                 if not export:
                     setContentAndView(il['contentType'])
-                    xbmc.executebuiltin('RunPlugin(%s?mode=processMissing)' % self._g.pluginid)
+                    self.checkMissing()
+                    #xbmc.executebuiltin('RunPlugin(%s?mode=processMissing)' % self._g.pluginid)
                 return
 
             if page == 'landing':
@@ -205,14 +212,14 @@ class PrimeVideo(Singleton):
                     if item.get('headerText') is None:
                         continue
                     title = self.cleanTitle(item['headerText'])
-                    prdata = item.get('presentationData', {})
+                    prdata = item.get('presentationData', item.get('facetedCarouselData', {}))
                     facetxt = prdata.get('facetText')
                     col_act = item.get('collectionAction')
                     col_lst = item.get('collectionItemList')
                     col_typ = item.get('collectionType')
                     if facetxt is not None:
-                        isprime = prdata.get('offerClassification', '') == 'PRIME'
-                        isincl = item.get('containerMetadata', {}).get('entitlementCues', {}).get('entitledCarousel', 'Entitled') == 'Entitled'
+                        isprime = prdata.get('offerClassification', prdata.get('facetType')) == 'PRIME'
+                        isincl = get_key('Entitled', item, 'containerMetadata', 'entitlementCues', 'entitledCarousel') == 'Entitled'
                         if self._s.paycont:
                             if isprime:
                                 facetxt = '[COLOR {}]{}[/COLOR]'.format(self._g.PrimeCol, facetxt)
@@ -267,7 +274,7 @@ class PrimeVideo(Singleton):
 
             if not export:
                 setContentAndView(ct)
-                xbmc.executebuiltin('RunPlugin(%s?mode=processMissing)' % self._g.pluginid)
+                self.checkMissing()
         return
 
     def formatTitle(self, il):
@@ -291,11 +298,8 @@ class PrimeVideo(Singleton):
             return json.loads(result[0])
         return {}
 
-    def Search(self, searchString=None):
-        if searchString is None:
-            searchString = self._g.dialog.input(getString(24121))
-        if searchString:
-            self.getPage('search', 'phrase={}'.format(quote_plus(searchString)))
+    def Search(self, searchString):
+        self.getPage('search', 'phrase={}'.format(quote_plus(searchString)))
 
     def editWatchList(self, asin, remove):
         act = 'RemoveTitleFromList' if remove > 0 else 'AddTitleToList'
@@ -338,24 +342,44 @@ class PrimeVideo(Singleton):
                         info TEXT,
                         PRIMARY KEY(asins, title)
                         );''')
+            c.execute('''CREATE TABLE IF NOT EXISTS seasons(
+                        seriesasin TEXT,
+                        season INTEGER,
+                        art TEXT,
+                        PRIMARY KEY(seriesasin, season)
+                        );''')
             self._db.commit()
         c.close()
 
+    @staticmethod
+    def get_sqlite3_thread_safety():
+        # Source: https://ricardoanderegg.com/posts/python-sqlite-thread-safety
+        # Mape value from SQLite's THREADSAFE to Python's DBAPI 2.0
+        # threadsafety attribute.
+        sqlite_threadsafe2python_dbapi = {0: 0, 2: 1, 1: 3}
+        conn = sqlite.connect(":memory:")
+        threadsafety = conn.execute("select * from pragma_compile_options where compile_options like 'THREADSAFE=%'").fetchone()[0]
+        conn.close()
+        threadsafety_value = int(threadsafety.split("=")[1])
+        return sqlite_threadsafe2python_dbapi[threadsafety_value]
+
     def _initialiseDB(self):
-        from sqlite3 import dbapi2 as sqlite
+        check_same_thread = False if self.get_sqlite3_thread_safety() == 3 else True
         self._cache_tbl = 'cache'
         self._art_tbl = 'art'
         self._dbFile = os.path.join(self._g.DATA_PATH, 'art-%s.db' % self._g.MarketID)
-        self._db = sqlite.connect(self._dbFile)
+        self._db = sqlite.connect(self._dbFile, check_same_thread=check_same_thread)
         self._cacheFile = os.path.join(self._g.DATA_PATH, 'cache-%s.db' % self._g.MarketID)
-        self._cacheDb = sqlite.connect(self._cacheFile)
+        self._cacheDb = sqlite.connect(self._cacheFile, check_same_thread=check_same_thread)
         self._createDB(self._art_tbl)
 
     @staticmethod
-    def cleanTitle(title):
+    def cleanTitle(title, search=False):
         if title.isupper():
             title = title.title().replace('[Ov]', '[OV]').replace('Bc', 'BC')
         title = title.replace('\u2013', '-').replace('\u00A0', ' ').replace('[dt./OV]', '').replace('_DUPLICATE_', '')
+        if search:
+            title = title.lower().replace('?', '').replace('omu', '').split('(')[0].split('[')[0]
         return title.strip()
 
     def getArtandInfo(self, infoLabels, contentType, item):
@@ -364,10 +388,9 @@ class PrimeVideo(Singleton):
             return infoLabels
         c = self._db.cursor()
         asins = infoLabels['asins']
-        infoLabels['banner'] = None
         season = int(infoLabels.get('season', -2))
         series = contentType == 'season' and self._s.disptvshow
-        series_art = season > -1 and self._s.useshowfanart and self._s.tmdb_art != 0
+        series_art = season > -1 and self._s.useshowfanart and self._s.tvdb_art != 0
         extra = ' and season = %s' % season if season > -2 else ''
         for asin in asins.split(','):
             j = None
@@ -382,17 +405,15 @@ class PrimeVideo(Singleton):
                     infoLabels['fanart'] = j['fanart']
                 if 'banner' in j:
                     infoLabels['banner'] = j['banner']
-                infoLabels.update({k: v for k, v in j.items() if k not in ['poster', 'fanart', 'banner', 'settings', 'title']})
+                infoLabels.update({k: v for k, v in j.items() if k not in ['poster', 'fanart', 'banner', 'settings', 'title', 'isPrime']})
             if (series_art and result) or series and 'seriesasin' in infoLabels:
                 result = c.execute('select info from art where asin like (?) and season = -1', ('%' + infoLabels['seriesasin'] + '%',)).fetchone()
                 if result:
                     j = {k: v for k, v in json.loads(result[0]).items() if v != self._g.na or v is None}
-                    if 'poster' in j and contentType == 'episode':
-                        infoLabels['poster'] = j['poster']
                     if 'fanart' in j and series_art:
                         infoLabels['fanart'] = j['fanart']
                     if series:
-                        infoLabels.update({k: v for k, v in j.items() if k not in ['poster', 'fanart', 'banner', 'settings', 'title']})
+                        infoLabels.update({k: v for k, v in j.items() if k not in ['settings', 'title', 'isPrime']})
             if j is not None:
                 return infoLabels
 
@@ -409,22 +430,23 @@ class PrimeVideo(Singleton):
         self._db.commit()
         return infoLabels
 
+    def checkMissing(self):
+        # xbmc.executebuiltin('RunPlugin(%s?mode=processMissing)' % self._g.pluginid)
+        if not self._art_thread.is_alive():
+            self._art_thread = Thread(target=self.processMissing)
+            self._art_thread.start()
+
     def processMissing(self):
         Log('Starting Fanart Update')
-        infos_updated = False
-        container_path = xbmc.getInfoLabel('Container.FolderPath')
         c = self._db.cursor()
         data = ''
-        while data is not None:
+        while data is not None and not self._g.monitor.abortRequested():
             data = c.execute('select * from miss limit 1').fetchone()
             if data is not None:
-                self.retrieveArtWork(*data)
                 c.execute('delete from miss where asins = ?', (data[0],))
                 self._db.commit()
-                infos_updated = True
+                self.retrieveArtWork(*data)
         c.close()
-        #if container_path == xbmc.getInfoLabel('Container.FolderPath') and infos_updated:
-        #    xbmc.executebuiltin('Container.Refresh')
         Log('Finished Fanart Update')
 
     def retrieveArtWork(self, asins, title, year, contentType, il):
@@ -432,7 +454,7 @@ class PrimeVideo(Singleton):
         item = None
         aw = Artwork()
         il = json.loads(il)
-        title = title.lower().replace('?', '').replace('omu', '').split('(')[0].split('[')[0].strip()
+        title = self.cleanTitle(title, True)
         cur = self._db.cursor()
 
         if not asins:
@@ -450,27 +472,34 @@ class PrimeVideo(Singleton):
                         if result is None:
                             cur.execute('insert or ignore into miss values (?,?,?,?,?)', (s_id, il['tvshowtitle'], None, 'season', '{}'))
                 self._db.commit()
-        il['setting'] = 0
-        season_number = il.get('season')
+        il['setting'] = self._s.tmdb_art if contentType == 'movie' else self._s.tvdb_art
+        season_number = il.get('season', -1)
+        seriesasin = il.get('seriesasin')
+        artwork = {}
 
-        if contentType == 'movie' and self._s.tmdb_art > 9:
-            il['setting'] = self._s.tmdb_art
-            il['fanart'] = aw.getTMDBImages(title, year=year)
-        if (contentType == 'season' or contentType == 'series') and self._s.tmdb_art > 9:
-            il['setting'] = self._s.tmdb_art
-            seasons, il['poster'], il['fanart'] = aw.getTVDBImages(title)
-            if not il['fanart']:
-                il['fanart'] = aw.getTMDBImages(title, content='tv')
-            season_number = -1
-            content = getATVData('GetASINDetails', 'ASINList=' + asins)['titles']
-            if content:
-                asins = self.getAsins(content[0], False)
-                del content
+        if contentType == 'movie' and ((self._s.tmdb_art == 1 and il.get('fanart') is None) or self._s.tmdb_art > 1):
+            il.update(aw.getTMDBImages(title, year=year)[0])
+        if 'season' in contentType and ((self._s.tvdb_art == 1 and il.get('fanart') is None) or self._s.tvdb_art > 1):
+            if seriesasin and season_number > -1:
+                result = cur.execute('select art from seasons where seriesasin like (?) and season=(?)', ('%' + seriesasin + '%', season_number)).fetchone()
+                if result:
+                    artwork = {season_number: json.loads(result[0])}
+                    cur.execute('delete from seasons where seriesasin like (?) and season=(?)', ('%' + seriesasin + '%', season_number))
+            if not artwork:
+                year = None if season_number > 1 else year
+                artwork = aw.getTVDBImages(self.cleanTitle(il.get('tvshowtitle', title), True), year)
+            il.update(artwork.get(season_number, {}))
 
-        if 'season' in contentType and il['season'] == 1:
-            s_il = deepcopy(il)
-            s_il['title'] = il['tvshowtitle']
-            cur.execute('insert or ignore into art values (?,?,?,?)', (il['seriesasin'], -1, json.dumps(s_il), self.days_since_epoch()))
+        if 'season' in contentType:
+            if len(cur.execute('select asin from art where asin like (?)', ('%' + seriesasin + '%',)).fetchall()) == 0:
+                s_il = deepcopy(il)
+                s_il['title'] = il['tvshowtitle']
+                s_il.update(artwork.get(-1, {}))
+                cur.execute('insert or ignore into art values (?,?,?,?)', (seriesasin, -1, json.dumps(s_il), self.days_since_epoch()))
+                if artwork:
+                    for s, data in artwork.items():
+                        if s > 0 and s != season_number:
+                            cur.execute('insert or ignore into seasons values (?,?,?)', (seriesasin, s, json.dumps(data)))
         cur.execute('insert or ignore into art values (?,?,?,?)', (asins, season_number, json.dumps(il), self.days_since_epoch()))
         self._db.commit()
         cur.close()
@@ -480,12 +509,12 @@ class PrimeVideo(Singleton):
         infoLabels = {'plot': None, 'mpaa': None, 'cast': [], 'year': None, 'premiered': None, 'rating': None, 'votes': None,
                       'isAdult': 1 if content.get('isAdultContent', False) else 0,
                       'director': None, 'genre': None, 'studio': None, 'thumb': None, 'fanart': None, 'isHD': False, 'isUHD': False,
-                      'audiochannels': 1, 'TrailerAvailable': False,
+                      'audiochannels': 2, 'TrailerAvailable': False,
                       'asins': content.get('id', content.get('titleId', content.get('channelId', ''))),
                       'isPrime': content.get('showPrimeEmblem', False)}
 
-        if infoLabels['isPrime'] is False and 'messagePresentation' in content:
-            infoLabels['isPrime'] = not len(content['messagePresentation'].get('glanceMessageSlot', []))
+        if infoLabels['isPrime'] is False and 'cardDecoration' in content:
+            infoLabels['isPrime'] = get_key('', content, 'cardDecoration', 'playbackLinkAction', 'videoMaterialType') == 'Feature'
         if 'badges' in content:
             b = content['badges']
             infoLabels['isAdult'] = 1 if b.get('adult', True) else 0
@@ -508,8 +537,14 @@ class PrimeVideo(Singleton):
             return self.getChanInfo(item, infoLabels)
         infoLabels['title'] = self.cleanTitle(item['title'])
         infoLabels['contentType'] = infoLabels['mediatype'] = ct = item['contentType'].lower()
+        infoLabels['plot'] = item.get('synopsis', '')
+        reldate = item.get('publicReleaseDate', item.get('releaseDate', 0))
+        reldate = reldate * -1 if reldate < 0 else reldate
+        if reldate > 0:
+            infoLabels['premiered'] = datetime.fromtimestamp(reldate / 1000).strftime('%Y-%m-%d')
+            infoLabels['year'] = datetime.fromtimestamp(reldate / 1000).strftime('%Y')
         if items != '':
-            infoLabels['tvshowtitle'] = items['show']['title']
+            infoLabels['tvshowtitle'] = self.cleanTitle(items['show']['title'])
             infoLabels['seriesasin'] = items['show']['titleId']
             infoLabels['totalseasons'] = len(items['seasons'])
             infoLabels['season'] = item.get('seasonNumber')
@@ -523,12 +558,8 @@ class PrimeVideo(Singleton):
         if 'seasonslist' in ct:
             infoLabels['contentType'] = infoLabels['mediatype'] = 'season'
             return infoLabels
-        reldate = item.get('publicReleaseDate', item.get('releaseDate', 0))
-        reldate = reldate * -1 if reldate < 0 else reldate
-        infoLabels['plot'] = item['synopsis']
         infoLabels['isAdult'] = 1 if item.get('isAdultContent', False) else 0
         infoLabels['votes'] = item.get('amazonRatingsCount', 0)
-        infoLabels['premiered'] = datetime.fromtimestamp(reldate / 1000).strftime('%Y-%m-%d')
         infoLabels['genre'] = item.get('genres')
         infoLabels['studio'] = item.get('studios')
         if item.get('runtimeMillis'):
@@ -549,7 +580,6 @@ class PrimeVideo(Singleton):
             else:
                 infoLabels['mpaa'] = '%s %s' % (AgeRestrictions().GetAgeRating(), item['regulatoryRating'])
         if 'live' in ct:
-            ct = 'live'
             liveData = findKey('data', item)
             if liveData:
                 s = liveData.get('startTime') / 1000
@@ -559,7 +589,7 @@ class PrimeVideo(Singleton):
                 infoLabels['plot'] = formstr.format(datetime.fromtimestamp(s), infoLabels['plot'])
                 infoLabels['premiered'] = datetime.fromtimestamp(s).strftime('%Y-%m-%d')
                 infoLabels['duration'] = e - s
-            infoLabels['contentType'] = infoLabels['mediatype'] = ct
+            infoLabels['contentType'] = infoLabels['mediatype'] = 'event'
             infoLabels['isPrime'] = True
         return infoLabels
 
