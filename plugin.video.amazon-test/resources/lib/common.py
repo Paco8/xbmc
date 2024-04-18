@@ -299,7 +299,7 @@ def findKey(key, obj):
                     res = findKey(key, d)
                     if res:
                         return res
-    return []
+    return {}
 
 
 def get_key(def_value, obj, *keys):
