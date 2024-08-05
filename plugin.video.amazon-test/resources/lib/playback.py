@@ -318,7 +318,7 @@ def PlayVideo(name, asin, adultstr, streamtype, forcefb=0):
         xbmc.executebuiltin('StartAndroidActivity("%s", "%s", "", "%s")' % (pkg, act, url))
 
     def _IStreamPlayback(asin, name, streamtype, isAdult, extern):
-        if streamtype == 2:
+        if streamtype == 3:
             u_path = '' if _g.UsePrimeVideo else '/gp/video'
             data = GrabJSON(_g.BaseUrl + u_path + '/detail/' + asin)
             if data:
@@ -393,12 +393,9 @@ def PlayVideo(name, asin, adultstr, streamtype, forcefb=0):
         if mpaa_check and not AgeRestrictions().RequestPin():
             return True
 
-        listitem = xbmcgui.ListItem(label=title, path=mpd)
-
-        if 'adaptive' in _g.is_addon:
-            listitem.setProperty('inputstream.adaptive.manifest_type', 'mpd')
-
         Log('Using %s Version: %s' % (_g.is_addon, is_version))
+
+        listitem = xbmcgui.ListItem(label=title, path=mpd)
         listitem.setArt({'thumb': thumb})
         listitem.setSubtitles(subs)
         listitem.setProperty('%s.license_type' % _g.is_addon, 'com.widevine.alpha')
