@@ -484,15 +484,18 @@ def GrabJSON(url, postData=None):
             elif 'props' in m:
                 m = m['props']
                 if 'body' in m and len(m['body']) > 0:
-                    body = m['body'][0]
+                    bodies = m['body']
                     if 'siteWide' in m and 'bodyStart' in m['siteWide'] and len(m['siteWide']['bodyStart']) > 0:
-                        m = m['siteWide']['bodyStart'][0]['props']
-                    if 'props' in body:
-                        body = body['props']
-                        for p in ['atf', 'btf', 'landingPage', 'browse', 'search', 'categories', 'genre']:
-                            Merge(m, body.get(p, {}))
-                        for p in ['content']:
-                            Merge(m, {p: body.get(p, {})})
+                        for bs in m['siteWide']['bodyStart']:
+                            if 'name' in bs and bs['name'] == 'navigation-bar' and 'props' in bs:
+                                m = bs['props']
+                    for bd in bodies:
+                        if 'props' in bd:
+                            body = bd['props']
+                            for p in ['atf', 'btf', 'landingPage', 'browse', 'search', 'categories', 'genre']:
+                                Merge(m, body.get(p, {}))
+                            for p in ['content']:
+                                Merge(m, {p: body.get(p, {})})
 
                 if _s.json_dump_raw:
                     # Prune useless/sensitive info
