@@ -56,7 +56,8 @@ def langSettings(config_id):
 
     if not sel is None:
         if len(sel) == 0:
-            sel = supported_langs[0]
+            #sel = supported_langs[0]
+            sel = [0]
         elif 0 in sel and len(sel) > 1:
             sel.remove(0)
         langs = ','.join([supported_langs[x] for x in sel])
