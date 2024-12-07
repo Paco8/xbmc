@@ -390,7 +390,11 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
                 lang = lang.group(1) if lang is not None else None
                 trackId = [lang, ''] if trackId is None and lang is not None else trackId
                 if trackId is not None:
-                    if lang in chosen_langs or chosen_langs == 'all':
+                    Log('PS trackId: ' + str(trackId))
+                    skip_track = False
+                    if not self.server._s.audio_description and trackId[1] == 'descriptive': skip_track = True
+                    if not self.server._s.audio_boost and 'boosted' in trackId[1]: skip_track = True
+                    if not skip_track and (lang in chosen_langs or chosen_langs == 'all'):
                         imp = ' impaired="true"' if 'descriptive' == trackId[1] else ''
                         newLocale = self._AdjustLocale(trackId[0], langCount[self.split_lang(trackId[0])])
                         setTag = setTag.replace('lang="{}"'.format(lang), 'lang="{}"{}'.format(newLocale, imp))

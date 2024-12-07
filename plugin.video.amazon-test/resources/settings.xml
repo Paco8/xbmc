@@ -47,6 +47,7 @@
         <setting label="30033" type="lsep"/>
         <setting id="audio_langs" type="action" label="30285" action="RunPlugin(plugin://plugin.video.amazon-test/?mode=langSettings&url=audio_langs)" enable="eq(-2,true)" />
         <setting id="audio_description" type="bool" label="30005" default="false"/>
+        <setting id="audio_boost" type="bool" label="Audio boost" default="false"/>
         <!-- Subtitles -->
         <setting label="30034" type="lsep"/>
         <setting id="sub_langs" type="action" label="30286" action="RunPlugin(plugin://plugin.video.amazon-test/?mode=langSettings&url=sub_langs)" enable="eq(-5,true)" />
