@@ -1453,7 +1453,7 @@ class PrimeVideo(Singleton):
                                 q.update({'isCleanSlateActive': '1', 'isDiscoverActive': '1', 'isLivePageActive': '1', 'variant': 'desktopWindows', 'payloadScheme': 'default'})
                                 try:
                                     t = json.loads(base64.b64decode(q['serviceToken']))
-                                except UnicodeDecodeError:
+                                except:
                                     t = ''
                                     if cnt['pagination'].get('url') is not None:
                                         u_parse = urlparse(cnt['pagination']['url'])
