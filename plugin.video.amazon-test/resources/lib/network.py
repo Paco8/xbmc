@@ -14,7 +14,7 @@ from urllib3.util.retry import Retry
 
 import xbmcgui
 
-from .common import Globals, Settings, sleep, MechanizeLogin
+from .common import Globals, Settings, sleep, MechanizeLogin, get_key, findKey
 from .logging import Log, WriteLog, LogJSON
 from .l10n import getString
 from .configs import getConfig, writeConfig
@@ -55,16 +55,9 @@ def getUA(blacklist=False):
 
     if not UAlist:
         Log('Loading list of common UserAgents')
-        # [{'pct': int percent, 'ua': 'useragent string'}, …]
-        html = getURL('https://www.useragents.me', rjson=False)
-        soup = BeautifulSoup(html, 'html.parser')
-        desk = soup.find('div', attrs={'id': 'most-common-desktop-useragents-json-csv'})
-        for div in desk.find_all('div'):
-            if div.h3.string == 'JSON':
-                ua = json.loads(div.textarea.string)
-                break
-        sorted_ua = sorted(ua, key=lambda x:x.get('pct', 0), reverse=True)
-        UAlist = [ua['ua'] for ua in sorted_ua if 'windows' in ua['ua'].lower() and ua['ua'] not in UAcur]
+        result = getURL('https://microlink.io/user-agents.json')
+        sorted_ua = result.get('user', {})
+        UAlist = [ua for ua in sorted_ua if 'windows' in ua.lower() and ua not in UAcur]
         if not UAlist:
             UAlist = ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36']
         writeConfig('UAlist', json.dumps(UAlist))
@@ -317,37 +310,13 @@ def FQify(URL):
 
 def GrabJSON(url, postData=None):
     """ Extract JSON objects from HTMLs while keeping the API ones intact """
-    from html.entities import name2codepoint
+    from html import unescape
 
     def Unescape(text):
-        """ Unescape various html/xml entities in dictionary values, courtesy of Fredrik Lundh """
+        if not text.startswith('{&#34;'):
+            text = text.replace('&#34;', '\\"')
+        text = unescape(text)
 
-        def fixup(m):
-            """ Unescape entities except for double quotes, lest the JSON breaks """
-            text = m.group(0)  # First group is the text to replace
-
-            # Unescape if possible
-            if text[:2] == "&#":
-                # character reference
-                try:
-                    bHex = ("&#x" == text[:3])
-                    char = int(text[3 if bHex else 2:-1], 16 if bHex else 10)
-                    if 34 == char:
-                        text = u'\\"'
-                    else:
-                        text = chr(char)
-                except ValueError:
-                    pass
-            else:
-                # named entity
-                char = text[1:-1]
-                if 'quot' == char:
-                    text = u'\\"'
-                elif char in name2codepoint:
-                    text = chr(name2codepoint[char])
-            return text
-
-        text = re.sub('&#?\\w+;', fixup, text)
         try:
             text = text.encode('latin-1').decode('utf-8')
         except (UnicodeEncodeError, UnicodeDecodeError):
@@ -429,7 +398,7 @@ def GrabJSON(url, postData=None):
                 Prune(o)
             return o
 
-        matches = BeautifulSoup(r, 'html.parser').find_all('script', {'type': re.compile('(?:text/template|application/json)'), 'id': ''})
+        matches = BeautifulSoup(r, 'html.parser').find_all('script', {'type': re.compile('(?:text/template|application/json)')})
         if not matches:
             matches = Captcha(r)
             if not matches:
@@ -439,24 +408,33 @@ def GrabJSON(url, postData=None):
         # Create a single object containing all the data from the multiple JSON objects in the page
         o = {}
         for m in matches:
+            if not (m.id is None or 'hydration-data' in m.id):
+                continue
+
             m = json.loads(Unescape(m.string.strip()))
 
             if ('widgets' in m) and ('Storefront' in m['widgets']):
                 m = m['widgets']['Storefront']
-            elif 'props' in m:
-                m = m['props']
-                if 'body' in m and len(m['body']) > 0:
-                    bodies = m['body']
-                    if 'siteWide' in m and 'bodyStart' in m['siteWide'] and len(m['siteWide']['bodyStart']) > 0:
-                        for bs in m['siteWide']['bodyStart']:
+            elif 'props' in m or 'init' in m:
+                bodies = findKey('body', m)
+                sw = findKey('siteWide', m)
+                m = m.get('props', m.get('init', {}))
+                if len(bodies) > 0:
+                    if 'bodyStart' in sw and len(sw['bodyStart']) > 0:
+                        for bs in sw['bodyStart']:
                             if 'name' in bs and bs['name'] == 'navigation-bar' and 'props' in bs:
                                 m = bs['props']
-                    for bd in bodies:
-                        if 'props' in bd:
-                            body = bd['props']
+                    else:
+                        if isinstance(bodies, dict):
+                            bodies = [bodies]
+                        m = findKey('sitewide-navigation-bar', m)
+
+                    if isinstance(bodies, list):
+                        for body in bodies:
+                            body = body.get('props', body)
                             for p in ['atf', 'btf', 'landingPage', 'browse', 'search', 'categories', 'genre']:
                                 Merge(m, body.get(p, {}))
-                            for p in ['content']:
+                            for p in ['content', 'containers', 'pagination']:
                                 Merge(m, {p: body.get(p, {})})
 
                 if _s.json_dump_raw:
@@ -471,6 +449,8 @@ def GrabJSON(url, postData=None):
                                 del st[k]
                             elif k in ['features', 'customerPreferences']:
                                 del st[k]
+            else:
+                m = {}
             # Prune sensitive context info and merge into o
             if _s.json_dump_raw:
                 Prune(m)

@@ -133,10 +133,11 @@ class PrimeVideo(Singleton):
                 for cid in node['children']:
                     if cid not in node:
                         node[cid] = {}
-                        try:
-                            if 0 == len(self._videodata[cid]['children']):
-                                node[cid]['lazyLoadURL'] = self._videodata[cid]['ref']
-                        except: pass
+                    try:
+                        if 0 == len(self._videodata[cid]['children']):
+                            node[cid]['lazyLoadURL'] = self._videodata[cid]['ref']
+                    except: pass
+
             if nodeName not in node:
                 self._g.dialog.notification('Catalog error', 'Catalog path not available…', xbmcgui.NOTIFICATION_ERROR)
                 return None, None
@@ -391,28 +392,24 @@ class PrimeVideo(Singleton):
             return False
 
         # Insert the searching mechanism
-        if self._g.UsePrimeVideo:
-            # Insert the searching mechanism
-            try:
-                if 'nav' in home:
-                    sfa = home['nav']['searchBar']['submitSearchDestructuredEndpoint']
-                    title = home['nav']['searchBar']['searchBarPlaceholderLabel']
-                else:
-                    sfa = home['searchBar']['searchFormAction']
-                    title = home['searchBar']['searchFormPlaceholder']
-                # Build the query parametrization
-                query = ''
-                if 'query' in sfa:
-                    query += '&'.join([f'{k}={v}' for k, v in sfa['query'].items()])
-                query = query if not query else query + '&'
-                self._catalog['root']['Search'] = {
-                    'title': self._BeautifyText(title),
-                    'verb': '?mode=Search',
-                    'endpoint': f"{sfa['partialURL']}?{query}phrase={{}}"
-                }
-            except:
-                Log('Search functionality not found', Log.ERROR)
-        else:
+        try:
+            if 'nav' in home:
+                sfa = home['nav']['searchBar']['submitSearchDestructuredEndpoint']
+                title = home['nav']['searchBar']['searchBarPlaceholderLabel']
+            else:
+                sfa = home['searchBar']['searchFormAction']
+                title = home['searchBar']['searchFormPlaceholder']
+            # Build the query parametrization
+            query = ''
+            if 'query' in sfa:
+                query += '&'.join([f'{k}={v}' for k, v in sfa['query'].items()])
+            query = query if not query else query + '&'
+            self._catalog['root']['Search'] = {
+                'title': self._BeautifyText(title),
+                'verb': '?mode=Search',
+                'endpoint': f"{sfa['partialURL']}?{query}phrase={{}}"
+            }
+        except:
             self._catalog['root']['Search'] = {
                 'title': getString(30108),
                 'verb': '?mode=Search',
@@ -545,24 +542,34 @@ class PrimeVideo(Singleton):
                 # Log('Encoded PrimeVideo refresh URL: pv/refresh/{}'.format(itemPathURI), Log.DEBUG)
                 ctxitems.append((getString(30268), f'RunPlugin({self._g.pluginid}pv/refresh/{itemPathURI})'))
 
+            mt = get_key('', entry, 'metadata', 'videometa', 'mediatype')
+            # use seasons metadata if missing in epsiodes
+            if 'episode' == mt and 'parent' in entry:
+                pid = entry['parent']
+                for k, v in self._videodata[pid]['metadata']['artmeta'].items():
+                    if k not in entry['metadata']['artmeta']:
+                        entry['metadata']['artmeta'][k] = v
+                for k in ['cast', 'genres', 'director']:
+                    if k not in entry['metadata']['videometa'] and k in self._videodata[pid]['metadata']['videometa']:
+                        entry['metadata']['videometa'][k] = self._videodata[pid]['metadata']['videometa'][k]
             # In case of tv shows find the oldest season and apply its art
-            try:
-                if ('tvshow' == entry['metadata']['videometa']['mediatype']) and (1 < len(entry['children'])):
-                    sn = None
-                    snid = None
-                    for child in entry['children']:
-                        try:
-                            childsn = self._videodata[child]['metadata']['videometa']['season']
-                            if (None is sn) or (sn > childsn):
-                                sn = childsn
-                                snid = child
-                        except: pass
-                    if snid:
-                        entry['metadata']['artmeta'] = self._videodata[snid]['metadata']['artmeta']
-                        entry['metadata']['videometa']['cast'] = self._videodata[snid]['metadata']['videometa'].get('cast', [])
-                        entry['metadata']['videometa']['plot'] = '{}\n\n{}'.format(getString(30253).format(len(entry['children'])),
-                                                                                   self._videodata[snid]['metadata']['videometa'].get('plot', ''))  # "# series" as plot/description
-            except: pass
+            elif ('tvshow' == mt) and (1 < len(entry.get('children', []))):
+                sn = None
+                snid = None
+                for child in entry['children']:
+                    try:
+                        childsn = self._videodata[child]['metadata']['videometa']['season']
+                        if (None is sn) or (sn > childsn):
+                            sn = childsn
+                            snid = child
+                    except:
+                        pass
+                if snid:
+                    entry['metadata']['artmeta'] = self._videodata[snid]['metadata']['artmeta']
+                    entry['metadata']['videometa']['cast'] = self._videodata[snid]['metadata']['videometa'].get('cast', [])
+                    entry['metadata']['videometa']['plot'] = '{}\n\n{}'.format(getString(30253).format(len(entry['children'])),
+                                                                               self._videodata[snid]['metadata']['videometa'].get('plot',
+                                                                                                                                  ''))  # "# series" as plot/description
 
             folder = True
             if 'metadata' in entry:
@@ -649,8 +656,7 @@ class PrimeVideo(Singleton):
             ][0 if bNoSort or ('nextPage' in node) else folderType])
 
             folderType = 0 if 2 > folderType else folderType
-            setContentAndView([None, 'videos', 'series', 'season', 'episode', 'movie'][folderType])
-            xbmcplugin.endOfDirectory(self._g.pluginhandle, succeeded=True, cacheToDisc=False)
+            setContentAndView([None, 'videos', 'series', 'season', 'episode', 'movie'][folderType], cacheToDisc=False)
         elif maincall:
             writeConfig('exporting', '')
             Log('Export finished')
@@ -1198,7 +1204,7 @@ class PrimeVideo(Singleton):
 
                 # Contributors (`producers` are ignored)
                 if 'contributors' in item:
-                    for k, v in OrderedDict([('directors', 'director'), ('starringActors', 'cast'), ('supportingActors', 'cast')]).items():
+                    for k, v in OrderedDict([('directors', 'director'), ('starringActors', 'cast'), ('supportingActors', 'cast'), ('cast', 'cast')]).items():
                         if k in item['contributors']:
                             for p in item['contributors'][k]:
                                 if 'name' in p:
@@ -1359,9 +1365,9 @@ class PrimeVideo(Singleton):
                                 facet = False
                                 facetxt = txt
                             if isprime:
-                                facetxt = f'[COLOR {self._g.PrimeCol}]{facetxt}[/COLOR]'
+                                facetxt = f'[COLOR {self._s.primecol}]{facetxt}[/COLOR]'
                             if not isincl:
-                                facetxt = f'[COLOR {self._g.PayCol}]{facetxt}[/COLOR]'
+                                facetxt = f'[COLOR {self._s.paycol}]{facetxt}[/COLOR]'
                             txt = f"{facetxt}{' ' if isprime or isincl is False else ': '}{txt}" if facet else txt  # facetxt doesn't mark correctly / to colorful
                             id = txt
                             o[id] = {'title': self._BeautifyText(txt)}
