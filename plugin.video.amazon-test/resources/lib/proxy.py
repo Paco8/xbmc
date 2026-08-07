@@ -306,6 +306,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
         matches = list(self._adaptation_set_re.finditer(period_data))
         all_infos = []
         infos = []
+        excluded_indexes = set()
 
         for index, match in enumerate(matches):
             full = match.group(0)
@@ -324,6 +325,13 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
                 attrs.get('audioTrackSubtype', '')
             )
             if not track_lang:
+                continue
+
+            if not self.server._s.audio_description and track_kind == 'descriptive':
+                excluded_indexes.add(index)
+                continue
+            if not self.server._s.audio_boost and 'boosted' in track_kind:
+                excluded_indexes.add(index)
                 continue
 
             base_lang = self.split_lang(track_lang)
@@ -412,7 +420,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
                 if self._log_audio_selection_details:
                     Log(f'[PS] Audio AdaptationSet attrs: {self._ParseTagAttributes(set_tag)}', Log.DEBUG)
                 result.append(f'{set_tag}{info["filtered_body"]}</AdaptationSet>')
-            elif index not in audio_indexes:
+            elif index not in audio_indexes and index not in excluded_indexes:
                 result.append(match.group(0))
             last = match.end()
 
