@@ -203,6 +203,8 @@ def getURLData(mode, asin, retformat='json', devicetypeid=_g.dtid_web, version=2
             url += '&deviceVideoCodecOverride=H264' + (',H265' if _s.use_h265 else '')
             url += '&deviceHdrFormatsOverride=' + supported_hdr()
             url += '&deviceVideoQualityOverride=' + ('UHD' if _s.enable_uhd else 'HD')
+        elif playback_req and vMT == 'Feature':
+            url += '&deviceVideoQualityOverride=SD'
 
     if retURL:
         return url
