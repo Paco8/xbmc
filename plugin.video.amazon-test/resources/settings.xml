@@ -39,6 +39,7 @@
         <!-- Browser/Script -->
         <setting id="remotectrl" type="bool" label="30074" default="false" visible="lt(-29,2)"/>
         <setting id="remote_vol" type="bool" label="30075" default="false" subsetting="true" enable="eq(-1,true)" visible="lt(-30,2)"/>
+        <setting id="l3_request_hd" type="bool" label="30304" default="false" visible="eq(-31,3) + eq(-11,false)"/>
     </category>
     <!-- Language -->
     <category label="30021">
