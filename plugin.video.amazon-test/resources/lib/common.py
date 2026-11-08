@@ -109,8 +109,11 @@ class Globals(Singleton):
             self._globals['platform'] |= self.OS_ANDROID
         if xbmc.getCondVisibility('system.platform.webos'):
             self._globals['platform'] |= self.OS_WEBOS
-        if (xbmcvfs.exists('/etc/os-release')) and ('libreelec' in xbmcvfs.File('/etc/os-release').read()):
-            self._globals['platform'] |= self.OS_LE
+        if xbmcvfs.exists('/etc/os-release'):
+            with xbmcvfs.File('/etc/os-release') as f_os:
+                os_rel = f_os.read()
+            if 'libreelec' in os_rel:
+                self._globals['platform'] |= self.OS_LE
 
         # Save the language code for HTTP requests and set the locale for l10n
         loc = getdefaultlocale()[0]
@@ -127,9 +130,16 @@ class Globals(Singleton):
         ]
 
     def __getattr__(self, name):
+        if name == 'pluginhandle':
+            return int(argv[1]) if (1 < len(argv)) and argv[0] else -1
+        if name == 'addon':
+            addon = Addon()
+            self._globals['addon'] = addon
+            return addon
         return self._globals[name]
 
     def InitialiseProvider(self, mid, burl, atv, pv, did):
+        self._globals['addon'] = Addon()
         self._globals['MarketID'] = mid
         self._globals['BaseUrl'] = burl
         self._globals['ATVUrl'] = atv
@@ -141,26 +151,33 @@ class Globals(Singleton):
             from .web_api import PrimeVideo
         elif ds == 1:
             from .android_api import PrimeVideo
-        elif ds == 2:
-            from .atv_api import PrimeVideo
-        if 'pv' not in self._globals:
+        cur_pv = self._globals.get('pv')
+        if cur_pv is None or not isinstance(cur_pv, PrimeVideo) or getattr(cur_pv, '_active_mid', None) != mid:
             self._globals['pv'] = PrimeVideo(self, Settings())
+            self._globals['pv']._active_mid = mid
 
 
 class Settings(Singleton):
     """ A singleton instance of various settings that could be needed to reload during runtime """
     _g = Globals()
-    _gs = _g.addon.getSetting
-    _integer = 'int("0" + self._gs("%s"))'
-    _bool_true = 'self._gs("%s") == "true"'
-    _bool_false = 'self._gs("%s") == "false"'
-    _ret_types = {_integer: ['playmethod', 'browser', 'items_perpage', 'tvdb_art', 'tmdb_art', 'region', 'skip_scene', 'data_source', 'send_vp'],
-                  _bool_true:
-                      ['useshowfanart', 'disptvshow', 'paycont', 'logging', 'json_dump', 'json_dump_collisions', 'sub_stretch', 'log_http', 'remotectrl',
-                       'remote_vol', 'multiuser', 'wl_export', 'audio_description', 'audio_boost', 'pv_episode_thumbnails', 'tld_episode_thumbnails', 'use_h265', 'enable_atmos',
-                       'profiles', 'show_pass', 'enable_uhd', 'show_recents', 'preload_seasons', 'preload_all_seasons', 'wvl1_device', 'search_history',
-                       'hide_trailers', 'export_not_aired', 'show_cats'],
-                  _bool_false: ['json_dump_raw', 'ssl_verif', 'proxy_mpdalter']}
+    _INT_SETTINGS = frozenset([
+        'playmethod', 'browser', 'items_perpage', 'tvdb_art', 'tmdb_art', 'region',
+        'skip_scene', 'data_source', 'send_vp', 'stream_quality'
+    ])
+    _BOOL_TRUE_SETTINGS = frozenset([
+        'useshowfanart', 'disptvshow', 'paycont', 'logging', 'json_dump', 'json_dump_collisions',
+        'sub_stretch', 'log_http', 'remotectrl', 'remote_vol', 'multiuser', 'wl_export',
+        'audio_description', 'audio_boost', 'pv_episode_thumbnails', 'tld_episode_thumbnails', 'use_h265',
+        'enable_atmos', 'profiles', 'show_pass', 'enable_uhd', 'show_recents',
+        'preload_seasons', 'preload_all_seasons', 'wvl1_device', 'search_history',
+        'hide_trailers', 'export_not_aired', 'show_cats', 'l3_request_hd'
+    ])
+    _BOOL_FALSE_SETTINGS = frozenset([
+        'json_dump_raw', 'ssl_verif', 'proxy_mpdalter'
+    ])
+
+    def _gs(self, name):
+        return self._g.addon.getSetting(name)
 
     def __getattr__(self, name):
         if name in ['MOVIE_PATH', 'TV_SHOWS_PATH']:
@@ -206,13 +223,13 @@ class Settings(Singleton):
             primecol = self._gs('primecol')
             return primecol if primecol else 'FF00A8E0'
 
-        value = None
-        for cmd in self._ret_types:
-            if self._ret_types[cmd].count(name) > 0:
-                value = eval(cmd % name)
-
-        value = self._gs(name) if value is None else value
-        return value
+        if name in self._INT_SETTINGS:
+            return int('0' + self._gs(name))
+        if name in self._BOOL_TRUE_SETTINGS:
+            return self._gs(name) == 'true'
+        if name in self._BOOL_FALSE_SETTINGS:
+            return self._gs(name) == 'false'
+        return self._gs(name)
 
     def __setattr__(self, name, value):
         if not name.startswith('_'):
@@ -387,7 +404,7 @@ def detectWidevine():
         from .logging import Log
         crypto_session = xbmcdrm.CryptoSession('edef8ba9-79d6-4ace-a3c8-27dcd51d21ed', 'AES/CBC/NoPadding', 'HmacSHA256')
         sec_level = crypto_session.GetPropertyString('securityLevel')
-        Log('Detected Widevine security level: {}'.format(sec_level, Log.DEBUG))
+        Log(f'Detected Widevine security level: {sec_level}', Log.DEBUG)
         res = sec_level.upper() == 'L1'
     except:
         res = False

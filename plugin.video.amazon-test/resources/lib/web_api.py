@@ -2,10 +2,10 @@
 # -*- coding: utf-8 -*-
 
 import json
-import pickle
 import re
 import time
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import deepcopy
 from urllib.parse import quote_plus, unquote_plus, quote
 
@@ -13,7 +13,8 @@ import xbmc, xbmcplugin, xbmcgui
 
 from .singleton import Singleton
 from .common import key_exists, return_item, return_value, sleep, findKey, MechanizeLogin, decode_token, get_key
-from .network import getURL, getURLData, FQify, GrabJSON, LocaleSelector
+from .network import getURL, getURLData, FQify, GrabJSON, GrabJSONParallel, LocaleSelector
+from .db import init_dbs, SQLiteVideoData
 from .logging import Log
 from .itemlisting import setContentAndView, addVideo, addDir
 from .users import loadUsers, loadUser, saveUserCookies, switchUser
@@ -27,8 +28,9 @@ class PrimeVideo(Singleton):
 
     _catalog = {}  # Catalog cache
     _videodata = {'urn2gti': {}}  # Video data cache
-    _catalogCache = None  # Catalog cache file name
-    _videodataCache = None  # Video data cache file name
+    _menuDb = None
+    _videoDb = None
+    _dbLock = None
     _separator = '/'  # Virtual path separator
 
     def __init__(self, globalsInstance, settingsInstance):
@@ -57,47 +59,54 @@ class PrimeVideo(Singleton):
         self._LoadCache()
 
     def _Flush(self, bFlushCacheData=True, bFlushVideoData=False):
-        """ Cache catalog and video data """
+        """ Cache catalog and video data into central SQLite databases """
+        if self._menuDb is None or self._videoDb is None:
+            self._LoadCache()
 
-        if bFlushCacheData:
-            with open(self._catalogCache, 'wb+') as fp:
-                pickle.dump(self._catalog, fp, -1)
+        if bFlushCacheData and self._catalog:
+            now = int(time.time())
+            exp = int(self._catalog.get('expiration', now + self._s.catalogCacheExpiry))
+            try:
+                cat_json = json.dumps(self._catalog, separators=(',', ':'))
+                with self._dbLock:
+                    with self._menuDb:
+                        self._menuDb.execute(
+                            'INSERT OR REPLACE INTO menu_cache (market_id, expiration, catalog_json, updated_at) VALUES (?, ?, ?, ?)',
+                            (self._g.MarketID, exp, cat_json, now)
+                        )
+            except Exception as exc:
+                Log(f'Failed to flush catalog to menuCache.db: {exc}', Log.ERROR)
+
         if bFlushVideoData:
-            with open(self._videodataCache, 'w+') as fp:
-                bPretty = self._s.logging
-                json.dump(self._videodata, fp, indent=2 if bPretty else None, separators=None if bPretty else (',', ':'), sort_keys=True)
+            try:
+                if isinstance(self._videodata, SQLiteVideoData):
+                    self._videodata.flush()
+            except Exception as exc:
+                Log(f'Failed to flush videodata to videoCache.db: {exc}', Log.ERROR)
 
     def _LoadCache(self):
-        """ Load cached catalog and video data """
-        from os.path import join as OSPJoin
-        from xbmcvfs import exists, delete
+        """ Load cached catalog and video data from menuCache.db and videoCache.db """
+        self._menuDb, self._videoDb, self._dbLock = init_dbs(self._g.DATA_PATH, self._g.MarketID)
+        self._videodata = SQLiteVideoData(self._videoDb, self._dbLock, self._g.MarketID)
+        self._catalog = {}
 
-        self._catalogCache = OSPJoin(self._g.DATA_PATH, f'PVCatalog{self._g.MarketID}.pvcp')
-        self._videodataCache = OSPJoin(self._g.DATA_PATH, f'PVVideoData{self._g.MarketID}.pvdp')
-
-        if exists(self._videodataCache):
-            try:
-                with open(self._videodataCache, 'r') as fp:
-                    data = json.load(fp)
-                if 'urn2gti' not in data:
-                    raise Exception('Old, unsafe cache data')
-                self._videodata = data
-            except:
-                Log(f'Removing corrupted cache file “{self._videodataCache}”', Log.DEBUG)
-                delete(self._videodataCache)
-                self._g.dialog.notification('Corrupted video cache', 'Unable to load the video cache data', xbmcgui.NOTIFICATION_ERROR)
-
-        if exists(self._catalogCache):
-            try:
-                with open(self._catalogCache, 'rb') as fp:
-                    cached = pickle.load(fp)
-                if time.time() < cached['expiration'] or self._s.freezeCache:
-                    self._catalog = cached
-                    #self._g.dialog.notification('Amazon VOD', 'Using cache', xbmcgui.NOTIFICATION_INFO, 1000)
-            except:
-                Log(f'Removing corrupted cache file “{self._catalogCache}”', Log.DEBUG)
-                delete(self._catalogCache)
-                self._g.dialog.notification('Corrupted catalog cache', 'Unable to load the catalog cache data', xbmcgui.NOTIFICATION_ERROR)
+        try:
+            with self._dbLock:
+                cur = self._menuDb.execute(
+                    'SELECT expiration, catalog_json FROM menu_cache WHERE market_id = ?',
+                    (self._g.MarketID,)
+                )
+                row = cur.fetchone()
+            if row is not None:
+                exp, raw_json = row
+                if time.time() < exp or self._s.freezeCache:
+                    self._catalog = json.loads(raw_json, object_pairs_hook=OrderedDict)
+        except Exception as exc:
+            Log(f'Corrupted catalog cache in menuCache.db: {exc}', Log.WARNING)
+            with self._dbLock:
+                with self._menuDb:
+                    self._menuDb.execute('DELETE FROM menu_cache WHERE market_id = ?', (self._g.MarketID,))
+            self._g.dialog.notification('Corrupted catalog cache', 'Unable to load the catalog cache data', xbmcgui.NOTIFICATION_ERROR)
 
     def _BeautifyText(self, title):
         """ Correct stylistic errors in Amazon's titles """
@@ -166,7 +175,7 @@ class PrimeVideo(Singleton):
                 if p.get('isDefault', False):
                     self._catalog['profiles']['default'] = p['id']
                 self._catalog['profiles'][p['id']] = {
-                    'title': p.get('name', 'Default').encode('utf-8'),
+                    'title': p.get('name', 'Default'),
                     'metadata': {'artmeta': {'thumb': p['avatarUrl']}},
                     'verb': f"pv/profiles/switch/{p['id']}",
                     'endpoint': p['switchLink'],
@@ -272,7 +281,6 @@ class PrimeVideo(Singleton):
     def DeleteCache(self, clear=0):
         """ Pops up a dialog asking cache purge confirmation """
         from .dialogs import PV_ClearCache
-        from xbmcvfs import delete
 
         # ClearCache.value returns a boolean bitmask
         if 0 == clear:
@@ -280,16 +288,21 @@ class PrimeVideo(Singleton):
         if 0 > clear:
             return
 
-        # Clear catalog (PVCP)
+        # Clear catalog (menuCache.db)
         if 1 & clear:
             self._catalog = {}
-            delete(self._catalogCache)
+            if self._menuDb is not None:
+                with self._dbLock:
+                    with self._menuDb:
+                        self._menuDb.execute('DELETE FROM menu_cache WHERE market_id = ?', (self._g.MarketID,))
             Log('Deleting catalog', Log.DEBUG)
 
-        # Clear video data (PVDP)
+        # Clear video data (videoCache.db)
         if 2 & clear:
-            self._videodata = {'urn2gti': {}}
-            delete(self._videodataCache)
+            if isinstance(self._videodata, SQLiteVideoData):
+                self._videodata.clear_market()
+            else:
+                self._videodata = SQLiteVideoData(self._videoDb, self._dbLock, self._g.MarketID)
             Log('Deleting video data', Log.DEBUG)
 
         del clear
@@ -497,6 +510,19 @@ class PrimeVideo(Singleton):
             if 'nextPage' in nodeKeys:
                 nodeKeys.pop(nodeKeys.index('nextPage'))
                 nodeKeys.append('nextPage')
+
+        # Batch-Preload aller benötigten GTIs (inkl. Kind-/Parent-GTIs) in einer einzigen SQLite-Abfrage
+        if isinstance(self._videodata, SQLiteVideoData) and nodeKeys:
+            self._videodata.preload(nodeKeys)
+            extra_keys = []
+            for k in nodeKeys:
+                if k in self._videodata:
+                    vd_entry = self._videodata[k]
+                    extra_keys.extend(vd_entry.get('children', []))
+                    if 'parent' in vd_entry:
+                        extra_keys.append(vd_entry['parent'])
+            if extra_keys:
+                self._videodata.preload(extra_keys)
 
         ft_exp = (2, 0, 1, 3, 0, 2)
         folderType = 0 if 'root' == path else 1
@@ -860,7 +886,52 @@ class PrimeVideo(Singleton):
             elif 'images' in item:
                 o[urn]['metadata']['artmeta']['thumb'] = MaxSize(findKey('url', item['images']))
 
-        def AddSeason(oid, o, bCacheRefresh, url):
+        def _fetch_tv_ancestor_show(episode_gti):
+            """Ermittelt den übergeordneten Serien-Knoten (SHOW) einer Episode via GetPlaybackResources."""
+            try:
+                suc, res = getURLData(
+                    'catalog/GetPlaybackResources',
+                    episode_gti,
+                    silent=True,
+                    extra=True,
+                    useCookie=cj if cj else True,
+                    opt='&titleDecorationScheme=primary-content',
+                    dRes='CatalogMetadata'
+                )
+                if suc and isinstance(res, dict):
+                    family = res.get('catalogMetadata', {}).get('family', {}).get('tvAncestors', [])
+                    for a in family:
+                        if a.get('catalog', {}).get('type') == 'SHOW':
+                            return a['catalog']
+            except Exception:
+                pass
+            return None
+
+        def _apply_show_parent(seasonGTI, parent_cat):
+            """Verknüpft eine Staffel und ihre Siblings deterministisch mit dem Serien-Parent-Knoten."""
+            if not parent_cat or seasonGTI not in self._videodata:
+                return None, False
+            pid = parent_cat['id']
+            self._videodata[seasonGTI]['parent'] = pid
+            if pid not in self._videodata:
+                self._videodata[pid] = {
+                    'title': parent_cat['title'],
+                    'metadata': {'videometa': {'mediatype': 'tvshow'}},
+                    'children': [seasonGTI]
+                }
+            else:
+                if 'children' not in self._videodata[pid]:
+                    self._videodata[pid]['children'] = []
+                if seasonGTI not in self._videodata[pid]['children']:
+                    self._videodata[pid]['children'].append(seasonGTI)
+            for gti in self._videodata[seasonGTI].get('siblings', []):
+                if gti in self._videodata:
+                    self._videodata[gti]['parent'] = pid
+                if gti not in self._videodata[pid]['children']:
+                    self._videodata[pid]['children'].append(gti)
+            return pid, True
+
+        def AddSeason(oid, o, bCacheRefresh, url, preloaded_data=None, pending_ancestors=None):
             """ Given a season, adds TV Shows to the catalog """
             urn = ExtractURN(url)
             parent = None
@@ -869,26 +940,18 @@ class PrimeVideo(Singleton):
             if bCacheRefresh or (urn not in self._videodata['urn2gti']):
                 # Find the show the season belongs to
                 url += ('' if 'episodeListSize' in url else ('&' if '?' in url else '?') + 'episodeListSize=9999')
-                bUpdatedVideoData |= ParseSinglePage(oid, season, bCacheRefresh, url=url)
-                seasonGTI = self._videodata['urn2gti'][urn]
-                try:
-                    # Query an episode to find its ancestors
-                    family = getURLData('catalog/GetPlaybackResources', self._videodata[seasonGTI]['children'][0], silent=True, extra=True, useCookie=True,
-                                        opt='&titleDecorationScheme=primary-content', dRes='CatalogMetadata')[1]['catalogMetadata']['family']['tvAncestors']
-                    # Grab the 'SHOW' ancestor ({SHOW: [{SEASON: [EPISODE, …], …}])
-                    parent = [a['catalog'] for a in family if 'SHOW' == a['catalog']['type']][0]
-                except: pass
-                if parent:
-                    # {'id': gti, 'title': …, 'type': 'SHOW', …}
-                    pid = parent['id']
-                    self._videodata[seasonGTI]['parent'] = pid
-                    self._videodata[pid] = {'title': parent['title'], 'metadata': {'videometa': {'mediatype': 'tvshow'}}, 'children': [seasonGTI]}
-                    for gti in self._videodata[seasonGTI]['siblings']:
-                        self._videodata[gti]['parent'] = pid
-                        if gti not in self._videodata[pid]['children']:
-                            self._videodata[pid]['children'].append(gti)
-                    parent = pid
-                    bUpdatedVideoData = True
+                bUpdatedVideoData |= ParseSinglePage(oid, season, bCacheRefresh, data=preloaded_data, url=url)
+                seasonGTI = self._videodata['urn2gti'].get(urn)
+                if seasonGTI and seasonGTI in self._videodata:
+                    children = self._videodata[seasonGTI].get('children', [])
+                    if children:
+                        if pending_ancestors is not None:
+                            pending_ancestors.append((oid, o, season, seasonGTI, children[0]))
+                            return bUpdatedVideoData
+                        parent_cat = _fetch_tv_ancestor_show(children[0])
+                        if parent_cat:
+                            parent, upd = _apply_show_parent(seasonGTI, parent_cat)
+                            bUpdatedVideoData |= upd
             else:
                 parent = self._videodata[self._videodata['urn2gti'][urn]].get('parent')
             bSeasonOnly = (not parent) or (oid == parent)
@@ -918,7 +981,9 @@ class PrimeVideo(Singleton):
                 bEpisodesOnly = oid == gti
                 siblings = [] if bEpisodesOnly else vd['siblings'][:]
                 siblings.append(gti)
-                siblings = sorted(siblings, key=(lambda k: self._videodata[k]['metadata']['videometa']['season']))
+                if isinstance(self._videodata, SQLiteVideoData):
+                    self._videodata.preload(siblings)
+                siblings = sorted(siblings, key=(lambda k: get_key(0, self._videodata.get(k, {}), 'metadata', 'videometa', 'season')))
                 for gti in siblings:
                     # Add season if we're not inside a season already
                     if (not bEpisodesOnly) and (gti not in o):
@@ -1287,48 +1352,64 @@ class PrimeVideo(Singleton):
         pageNumber = 1  # Page number
 
         while 0 < len(requestURLs):
-            requestURL = requestURLs.pop(0)  # rURLs: FIFO stack
-            o = obj
+            # Stufe: Wenn mehrere Folge-URLs (z.B. Episoden-Paginierung oder Siblings) in der Queue liegen,
+            # rufen wir den aktuellen Batch parallel über GrabJSONParallel ab.
+            batch_urls = []
+            while requestURLs and len(batch_urls) < 4:
+                u = requestURLs.pop(0)
+                if u is not None:
+                    u += ('' if 'episodeListSize' in u or '/api/' in u else ('&' if '?' in u else '?') + 'episodeListSize=9999')
+                batch_urls.append(u)
 
-            # Too many instances to track, append the episode finder to about every query and cross fingers
-            if requestURL is not None:
-                requestURL += ('' if 'episodeListSize' in requestURL or '/api/' in requestURL else ('&' if '?' in requestURL else '?') + 'episodeListSize=9999')
+            prefetched_batch = {}
+            urls_to_grab = [
+                u for u in batch_urls
+                if u is not None and 'lazyLoadData' not in obj and (
+                    bCacheRefresh or not ExtractURN(u) or ExtractURN(u) not in self._videodata['urn2gti']
+                )
+            ]
+            if len(urls_to_grab) > 1:
+                prefetched_batch = GrabJSONParallel(urls_to_grab, max_workers=4)
 
-            # Load content
-            bCouldNotParse = False
-            try:
-                cnt = None
+            for requestURL in batch_urls:
+                o = obj
 
-                # Use cached data, if available
-                if 'lazyLoadData' in o:
-                    cnt = o['lazyLoadData']
-                    del o['lazyLoadData']
+                # Load content
+                bCouldNotParse = False
+                try:
+                    cnt = None
 
-                # Load content from an external url
-                if not cnt:
-                    urn = ExtractURN(requestURL)
-                    if (not bCacheRefresh) and urn and (urn in self._videodata['urn2gti']):
-                        # There are no API endpoints for movie/series pages, so we handle them in a separate function
-                        bUpdatedVideoData |= ParseSinglePage(breadcrumb[-1], o, bCacheRefresh, url=requestURL)
-                        if 'lazyLoadURL' in o:
-                            if 'ref' not in o:
-                                o['ref'] = o['lazyLoadURL']
-                            del o['lazyLoadURL']
-                        continue
-                    else:
-                        cnt = GrabJSON(requestURL)
+                    # Use cached data, if available
+                    if 'lazyLoadData' in o:
+                        cnt = o['lazyLoadData']
+                        del o['lazyLoadData']
 
-                # Don't switch direct action for reference until we have content to show for it
-                if cnt and ('lazyLoadURL' in o):
-                    if 'ref' not in o:
-                        o['ref'] = o['lazyLoadURL']
-                    del o['lazyLoadURL']
-            except:
-                bCouldNotParse = True
-            if bCouldNotParse or (not cnt):
-                self._g.dialog.notification(getString(30251), requestURL[:48], xbmcgui.NOTIFICATION_ERROR)
-                Log(f'Unable to fetch the url: {requestURL}', Log.ERROR)
-                continue
+                    # Load content from an external url
+                    if not cnt:
+                        urn = ExtractURN(requestURL)
+                        if (not bCacheRefresh) and urn and (urn in self._videodata['urn2gti']):
+                            # There are no API endpoints for movie/series pages, so we handle them in a separate function
+                            with self._dbLock:
+                                bUpdatedVideoData |= ParseSinglePage(breadcrumb[-1], o, bCacheRefresh, url=requestURL)
+                                if 'lazyLoadURL' in o:
+                                    if 'ref' not in o:
+                                        o['ref'] = o['lazyLoadURL']
+                                    del o['lazyLoadURL']
+                            continue
+                        else:
+                            cnt = prefetched_batch.get(requestURL) if requestURL in prefetched_batch else GrabJSON(requestURL)
+
+                    # Don't switch direct action for reference until we have content to show for it
+                    if cnt and ('lazyLoadURL' in o):
+                        if 'ref' not in o:
+                            o['ref'] = o['lazyLoadURL']
+                        del o['lazyLoadURL']
+                except:
+                    bCouldNotParse = True
+                if bCouldNotParse or (not cnt):
+                    self._g.dialog.notification(getString(30251), (requestURL or '')[:48], xbmcgui.NOTIFICATION_ERROR)
+                    Log(f'Unable to fetch the url: {requestURL}', Log.ERROR)
+                    continue
 
             # Submenus
             mmpos = [len(breadcrumb)-i for i, x in enumerate(breadcrumb) if 'mmlinks' in x]
@@ -1434,6 +1515,12 @@ class PrimeVideo(Singleton):
                 if isinstance(vo, list):
                     vo = vo[0]
                 items = vo.get('entities', []) + vo.get('items', []) + vo.get('content', {}).get('items', [])
+
+                # Stufe 1 (Paralleler Prefetch der Katalog-Elemente):
+                # Sammle alle Ziel-URLs (Filme & Serien/Staffeln), die noch nicht im SQLite-Cache liegen,
+                # und lade sie in einer parallelen Welle über GrabJSONParallel vorab.
+                parsed_items = []
+                urls_to_prefetch = []
                 for item in items:
                     tile = return_value(item, 'image', 'alternateText')
                     tile_cov = item.get('image', {})
@@ -1453,6 +1540,21 @@ class PrimeVideo(Singleton):
                             t = item[wl]['endpoint']['query']['titleType'].lower()
                         except:
                             t = ''
+                        is_season_or_show = (t in ['season', 'show']) or ('season' in item) or ('show' in item)
+                        fetch_url = iu
+                        if iu and not ('station' in item or (tile and iu) or ('liveInfo' in item) or ('event' == t)):
+                            urn = ExtractURN(iu)
+                            if is_season_or_show:
+                                fetch_url = iu + ('' if 'episodeListSize' in iu else ('&' if '?' in iu else '?') + 'episodeListSize=9999')
+                            if bCacheRefresh or (urn and urn not in self._videodata['urn2gti']):
+                                urls_to_prefetch.append(fetch_url)
+                        parsed_items.append((item, tile, tile_cov, iu, fetch_url, t, is_season_or_show))
+
+                prefetched_pages = GrabJSONParallel(urls_to_prefetch, max_workers=4) if urls_to_prefetch else {}
+                pending_ancestors = []
+
+                with self._dbLock:
+                    for item, tile, tile_cov, iu, fetch_url, t, is_season_or_show in parsed_items:
                         if 'station' in item:
                             AddLiveTV(o, item)
                         elif tile and iu:
@@ -1460,17 +1562,58 @@ class PrimeVideo(Singleton):
                             o[id] = {'title': tile, 'lazyLoadURL': iu, 'metadata': {'artmeta': {'thumb': findKey('url', tile_cov)}}}
                         elif ('liveInfo' in item) or ('event' == t):
                             AddLiveEvent(o, item, iu)
-                        elif t not in ['season', 'show'] and 'season' not in item and 'show' not in item:
-                            bUpdatedVideoData |= ParseSinglePage(breadcrumb[-1], o, bCacheRefresh, url=iu)
+                        elif not is_season_or_show:
+                            bUpdatedVideoData |= ParseSinglePage(
+                                breadcrumb[-1], o, bCacheRefresh,
+                                data=prefetched_pages.get(fetch_url), url=iu
+                            )
                         else:
-                            bUpdatedVideoData |= AddSeason(breadcrumb[-1], o, bCacheRefresh, iu)
+                            bUpdatedVideoData |= AddSeason(
+                                breadcrumb[-1], o, bCacheRefresh, iu,
+                                preloaded_data=prefetched_pages.get(fetch_url),
+                                pending_ancestors=pending_ancestors
+                            )
+
+                # Stufe 2 (Serien-Hierarchie & tvAncestors parallel auflösen):
+                if pending_ancestors:
+                    ep_gtis = list(dict.fromkeys(pa[4] for pa in pending_ancestors if pa[4]))
+                    ancestor_map = {}
+                    if len(ep_gtis) == 1:
+                        ancestor_map[ep_gtis[0]] = _fetch_tv_ancestor_show(ep_gtis[0])
+                    elif len(ep_gtis) > 1:
+                        with ThreadPoolExecutor(max_workers=min(4, len(ep_gtis))) as executor:
+                            fut_map = {executor.submit(_fetch_tv_ancestor_show, ep): ep for ep in ep_gtis}
+                            for fut in as_completed(fut_map):
+                                ep = fut_map[fut]
+                                if self._g.monitor.abortRequested():
+                                    break
+                                try:
+                                    ancestor_map[ep] = fut.result()
+                                except Exception:
+                                    ancestor_map[ep] = None
+
+                    with self._dbLock:
+                        for oid_pa, o_pa, season_pa, seasonGTI_pa, ep_gti_pa in pending_ancestors:
+                            parent_cat = ancestor_map.get(ep_gti_pa)
+                            parent_id = None
+                            if parent_cat:
+                                parent_id, upd = _apply_show_parent(seasonGTI_pa, parent_cat)
+                                bUpdatedVideoData |= upd
+                            bSeasonOnly = (not parent_id) or (oid_pa == parent_id)
+                            target_o = o_pa
+                            if not bSeasonOnly:
+                                target_o[parent_id] = deepcopy(self._videodata[parent_id])
+                                target_o = target_o[parent_id]
+                            for sid in season_pa:
+                                target_o[sid] = season_pa[sid]
 
 
                 # Single page
                 bSinglePage = False
                 if 'state' in cnt or 'widgets' in cnt:
                     bSinglePage = True
-                    bUpdatedVideoData |= ParseSinglePage(breadcrumb[-1], o, bCacheRefresh, data=cnt, url=requestURL)
+                    with self._dbLock:
+                        bUpdatedVideoData |= ParseSinglePage(breadcrumb[-1], o, bCacheRefresh, data=cnt, url=requestURL)
                 # Pagination
                 if ('pagination' in cnt) or (key_exists(cnt, 'viewOutput', 'features', wl_lib, 'content', 'seeMoreHref'))\
                         or ('hasMoreItems' in cnt) or ('paginationTargetId' in vo):

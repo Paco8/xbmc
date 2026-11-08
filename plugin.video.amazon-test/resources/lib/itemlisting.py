@@ -47,7 +47,7 @@ def setContentAndView(content, **kwargs):
 
 def addDir(name, mode='', url='', infoLabels=None, opt='', catalog='Browse', cm=None, page=1, export=False, thumb=None):
     if export and mode == 'getPage':
-        exec(f'_g.pv.{mode}("{url}", "{opt}", {page}, export={export})')
+        getattr(_g.pv, mode)(url, opt, page, export=export)
         return
 
     useatv = _s.data_source == 1
@@ -127,6 +127,7 @@ def addVideo(name, asin, infoLabels, cm=None, export=False):
 class ListItem_InfoTag(xbmcgui.ListItem):
     """ adapted from https://github.com/jurialmunkey/script.module.infotagger """
     def __init__(self, *args, **kwargs):
+        kwargs.setdefault('offscreen', True)
         super(ListItem_InfoTag, self).__init__(*args, **kwargs)
         self.InfoTag = None
         self.map = {

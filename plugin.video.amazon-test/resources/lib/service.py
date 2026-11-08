@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 import threading
 
-import xbmc, xbmcgui
+import xbmc
+from xbmcaddon import Addon
 
 from .logging import Log
 from .configs import getConfig, writeConfig
@@ -21,18 +22,17 @@ class BackgroundService(xbmc.Monitor):
         self.wl_export = self._s.wl_export
         self.proxy = ProxyTCPD(self._s)
         writeConfig('loginlock', '')
-        writeConfig('proxyaddress', f'127.0.0.1:{self.proxy.port}')
+        writeConfig('proxytoken', self.proxy.token)
+        writeConfig('proxyaddress', f'127.0.0.1:{self.proxy.port}/{self.proxy.token}')
         Log(f'Service: Proxy bound to {self._s.proxyaddress}')
-        self.proxy_thread = threading.Thread(target=self.proxy.serve_forever)
+        self.proxy_thread = threading.Thread(target=self.proxy.serve_forever, daemon=True)
 
     def onSettingsChanged(self):
-        super(BackgroundService, self).__init__()
         xbmc.sleep(500)
+        self._s._g._globals['addon'] = Addon()
         self.wl_export = self._s.wl_export
 
     def start(self):
-        self.proxy.server_activate()
-        self.proxy.timeout = 1
         self.proxy_thread.start()
         Log('Service: Proxy server started')
 
@@ -52,9 +52,15 @@ class BackgroundService(xbmc.Monitor):
         self.stop()
 
     def stop(self):
-        self.proxy.server_close()
         self.proxy.shutdown()
-        self.proxy_thread.join()
+        self.proxy.server_close()
+        self.proxy_thread.join(timeout=5)
+        for session in list(getattr(self.proxy.RequestHandlerClass, 'sessions', {}).values()):
+            try:
+                session.close()
+            except Exception:
+                pass
+        getattr(self.proxy.RequestHandlerClass, 'sessions', {}).clear()
         Log('Service: Proxy server stopped')
 
     def export_watchlist(self, cur_time=0):
@@ -63,31 +69,3 @@ class BackgroundService(xbmc.Monitor):
             Log('Service: Exporting the Watchlist')
             self.lastExport = cur_time
             xbmc.executebuiltin('RunPlugin(plugin://plugin.video.amazon-test/?mode=exportWatchlist)')
-
-
-class SettingsMonitor(xbmc.Monitor):
-    def __init__(self):
-        super(SettingsMonitor, self).__init__()
-        self.mon_prop = 'amazon_settingsmonitor_state'
-        self.window = xbmcgui.Window(10000)
-        self._abort = False
-
-    def onSettingsChanged(self):
-        super(SettingsMonitor, self).__init__()
-        Log('Service: Settings changed', Log.DEBUG)
-        xbmc.sleep(500)
-        self._abort = True
-
-    def start(self):
-        if self.window.getProperty(self.mon_prop) == '1':
-            return
-
-        self.window.setProperty(self.mon_prop, '1')
-        Log('Service: Settings Monitor started ', Log.DEBUG)
-        while not self.abortRequested() and not self._abort:
-            if self.waitForAbort(2):
-                break
-
-        self.window.setProperty(self.mon_prop, '')
-        Log('Service: Settings Monitor stopped ', Log.DEBUG)
-        exit()
