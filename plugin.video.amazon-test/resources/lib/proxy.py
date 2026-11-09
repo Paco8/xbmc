@@ -390,7 +390,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
         if not representations:
             return [], 0, 0, False, 0, adaptation_body
 
-        prefer_atmos = self.server._s.enable_atmos is not False
+        prefer_atmos = self._prefer_atmos  # cached once per period in _AlterPeriodAudio
         candidates = []
         found_atmos = False
         set_codecs = self._ParseTagAttributes(adaptation_tag).get('codecs', '').lower()
@@ -440,11 +440,20 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
         return kept, min(bitrates), max(bitrates), any(item['atmos'] for item in kept), best_codec_rank, filtered_body
 
     def _AudioSetScore(self, max_bitrate, atmos, codec_rank):
-        prefer_atmos = self.server._s.enable_atmos is not False
+        prefer_atmos = self._prefer_atmos
         return (1 if prefer_atmos and atmos else 0, codec_rank, max_bitrate)
 
     def _AlterPeriodAudio(self, period_data):
         import re
+        from time import monotonic
+
+        # Every self.server._s.<attr> access builds a new xbmcaddon.Addon(), which is very slow on weak
+        # devices (Android TV). Read each setting once here, not once per AdaptationSet.
+        started = monotonic()
+        self._prefer_atmos = self.server._s.enable_atmos is not False
+        allow_description = self.server._s.audio_description
+        allow_boost = self.server._s.audio_boost
+        kodi_version = self.server._s._g.KodiVersion
 
         if self._adaptation_set_re is None:
             self.__class__._adaptation_set_re = re.compile(r'<AdaptationSet\b[^>]*>.*?</AdaptationSet>', flags=re.DOTALL)
@@ -478,10 +487,10 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
             if not track_lang:
                 continue
 
-            if not self.server._s.audio_description and track_kind == 'descriptive':
+            if not allow_description and track_kind == 'descriptive':
                 excluded_indexes.add(index)
                 continue
-            if not self.server._s.audio_boost and 'boosted' in track_kind:
+            if not allow_boost and 'boosted' in track_kind:
                 excluded_indexes.add(index)
                 continue
 
@@ -552,7 +561,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
             if info is not None:
                 new_lang = self._AdjustLocale(info['track_lang'], lang_count[info['base_lang']])
                 suffix = ''
-                if info['best_atmos'] and self.server._s._g.KodiVersion < 21:
+                if info['best_atmos'] and kodi_version < 21:
                     suffix = ' (Atmos)'
                 elif 'boosted' in info['track_kind']:
                     suffix = f" (Dialog Boost: {info['track_kind'].replace('boosteddialog', '').capitalize()})"
@@ -576,6 +585,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
             last = match.end()
 
         result.append(period_data[last:])
+        Log(f'[PS] Period audio rewrite took {monotonic() - started:.2f}s', Log.DEBUG)
         return ''.join(result)
 
     def _AlterGPR(self, endpoint, headers, data):
