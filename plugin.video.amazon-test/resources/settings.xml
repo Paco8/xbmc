@@ -529,7 +529,7 @@
 					<default>false</default>
 					<control type="toggle"/>
 				</setting>
-				<setting id="audio_boost" type="boolean" label="30313" help="">
+				<setting id="audio_boost" type="boolean" label="30203" help="">
 					<level>0</level>
 					<default>false</default>
 					<control type="toggle"/>
@@ -742,7 +742,7 @@
 		</category>
 		<category id="datasource" label="30273" help="">
 			<group id="1">
-				<setting id="pv_freeze_cache" type="boolean" label="30314" help="">
+				<setting id="pv_freeze_cache" type="boolean" label="30204" help="">
 					<level>0</level>
 					<default>false</default>
 					<control type="toggle"/>
