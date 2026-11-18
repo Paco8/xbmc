@@ -390,7 +390,7 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
         if not representations:
             return [], 0, 0, False, 0, adaptation_body
 
-        prefer_atmos = self._prefer_atmos  # cached once per period in _AlterPeriodAudio
+        prefer_atmos = self._prefer_atmos
         candidates = []
         found_atmos = False
         set_codecs = self._ParseTagAttributes(adaptation_tag).get('codecs', '').lower()
@@ -453,6 +453,10 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
         self._prefer_atmos = self.server._s.enable_atmos is not False
         allow_description = self.server._s.audio_description
         allow_boost = self.server._s.audio_boost
+        kodi_version = self.server._s._g.KodiVersion
+
+        # Read the settings once: every access creates a new xbmcaddon.Addon(), which is very slow on some devices
+        self._prefer_atmos = self.server._s.enable_atmos is not False
         kodi_version = self.server._s._g.KodiVersion
 
         if self._adaptation_set_re is None:
