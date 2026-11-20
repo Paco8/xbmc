@@ -553,7 +553,8 @@ class ProxyHTTPD(BaseHTTPRequestHandler):
 
         lang_count = {}
         for info in selected_infos:
-            lang_count[info['base_lang']] = lang_count.get(info['base_lang'], 0) + 1
+            lang_count.setdefault(info['base_lang'], set()).add(info['track_lang'])
+        lang_count = {k: len(v) for k, v in lang_count.items()}
 
         selected_indexes = {info['index']: info for info in selected_infos}
         audio_indexes = {info['index'] for info in all_infos}
